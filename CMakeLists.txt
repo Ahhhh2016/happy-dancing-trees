@@ -33,13 +33,20 @@ add_executable(${PROJECT_NAME}
   settings.h
   canvas2d.h
   rgba.h
+  monster.h monster.cpp
 )
 
 # Specifies libraries to be linked (Qt components, glew, etc)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
   Qt::Core
   Qt::Widgets
   Qt::Gui
+)
+
+# This allows you to `#include "Eigen/..."`
+target_include_directories(${PROJECT_NAME} PRIVATE
+    Eigen
 )
 
 # Set this flag to silence warnings on Windows

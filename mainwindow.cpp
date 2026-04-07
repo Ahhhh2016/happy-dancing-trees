@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "settings.h"
+#include "monster.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -122,6 +123,11 @@ MainWindow::MainWindow()
     addPushButton(filterLayout, "Apply Filter", &MainWindow::onFilterButtonClick);
     addPushButton(filterLayout, "Revert Image", &MainWindow::onRevertButtonClick);
     addPushButton(filterLayout, "Save Image", &MainWindow::onSaveButtonClick);
+
+    // build dummy strokes
+    monster m;
+    Stroke body = m.makeDummyBody();
+    Stroke leg  = m.makeDummyLeg();
 }
 
 /**
