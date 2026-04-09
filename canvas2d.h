@@ -10,6 +10,8 @@
 #include "monster.h"
 
 class QImage;
+class QPainter;
+class QPaintEvent;
 
 class Canvas2D : public QLabel {
     Q_OBJECT
@@ -36,7 +38,6 @@ public:
 
 private:
     std::vector<RGBA> m_data;
-    std::vector<float> mask_data;
     std::vector<Stroke> m_strokes;
     std::vector<Region> m_regions;
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
@@ -59,13 +60,9 @@ private:
     virtual void mouseReleaseEvent(QMouseEvent* event) override {
         mouseUp(event->position());
     }
+    virtual void paintEvent(QPaintEvent *event) override;
 
     // TODO: add any member variables or functions you need
-    int posToIndex(int x, int y, int width);
-    void drawMask(int x, int y);
-    RGBA colorBlending(RGBA brush, RGBA canvas, float opacity);
-    void changeMask();
-
     Eigen::Vector2f toVector2D(const QPointF &point) const;
     void beginStroke(const QPointF &point);
     void appendPointToActiveStroke(const QPointF &point);
@@ -76,8 +73,7 @@ private:
     QImage makeImageFromCanvasData() const;
     void loadCanvasDataFromImage(const QImage &image);
     void renderRegion(const Region &region);
-    void stampMask(int x, int y);
-    void drawInterpolatedSegment(const QPointF &from, const QPointF &to);
+    void paintStrokePreview(QPainter &painter, const Stroke &stroke) const;
 };
 
 #endif // CANVAS2D_H

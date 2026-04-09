@@ -22,9 +22,6 @@
  * not update the GUI).
 */
 struct Settings {
-    int brushRadius;
-    RGBA brushColor;
-
     QString imagePath;
 
     void loadSettingsOrDefaults();

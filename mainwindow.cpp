@@ -12,7 +12,7 @@
 
 MainWindow::MainWindow()
 {
-    setWindowTitle("2D Projects: Brush");
+    setWindowTitle("2D Projects");
 
     settings.loadSettingsOrDefaults();
 
@@ -43,22 +43,10 @@ MainWindow::MainWindow()
 
     vLayout->addWidget(controlsScroll);
 
-    addHeading(brushLayout, "Brush");
-    addSpinBox(brushLayout, "red", 0, 255, 1, settings.brushColor.r, [this](int value){ setUIntVal(settings.brushColor.r, value); });
-    addSpinBox(brushLayout, "green", 0, 255, 1, settings.brushColor.g, [this](int value){ setUIntVal(settings.brushColor.g, value); });
-    addSpinBox(brushLayout, "blue", 0, 255, 1, settings.brushColor.b, [this](int value){ setUIntVal(settings.brushColor.b, value); });
-    addSpinBox(brushLayout, "alpha", 0, 255, 1, settings.brushColor.a, [this](int value){ setUIntVal(settings.brushColor.a, value); });
-    addSpinBox(brushLayout, "radius", 0, 100, 1, settings.brushRadius, [this](int value){ setIntVal(settings.brushRadius, value); });
-
     addPushButton(brushLayout, "Load Image", &MainWindow::onUploadButtonClick);
     addPushButton(brushLayout, "Revert Image", &MainWindow::onRevertButtonClick);
     addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
     addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
-
-    // build dummy strokes
-    monster m;
-    Stroke body = m.makeDummyBody();
-    Stroke leg  = m.makeDummyLeg();
 }
 
 void MainWindow::setupCanvas2D() {
@@ -70,53 +58,10 @@ void MainWindow::setupCanvas2D() {
     }
 }
 
-void MainWindow::addHeading(QBoxLayout *layout, QString text) {
-    QFont font;
-    font.setPointSize(16);
-    font.setBold(true);
-
-    QLabel *label = new QLabel(text);
-    label->setFont(font);
-    layout->addWidget(label);
-}
-
-void MainWindow::addLabel(QBoxLayout *layout, QString text) {
-    layout->addWidget(new QLabel(text));
-}
-
-void MainWindow::addSpinBox(QBoxLayout *layout, QString text, int min, int max, int step, int val, auto function) {
-    QSpinBox *box = new QSpinBox();
-    box->setMinimum(min);
-    box->setMaximum(max);
-    box->setSingleStep(step);
-    box->setValue(val);
-    QHBoxLayout *subLayout = new QHBoxLayout();
-    addLabel(subLayout, text);
-    subLayout->addWidget(box);
-    layout->addLayout(subLayout);
-    connect(box, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged),
-            this, function);
-}
-
 void MainWindow::addPushButton(QBoxLayout *layout, QString text, auto function) {
     QPushButton *button = new QPushButton(text);
     layout->addWidget(button);
     connect(button, &QPushButton::clicked, this, function);
-}
-
-void MainWindow::setUIntVal(std::uint8_t &setValue, int newValue) {
-    setValue = newValue;
-    m_canvas->settingsChanged();
-}
-
-void MainWindow::setIntVal(int &setValue, int newValue) {
-    setValue = newValue;
-    m_canvas->settingsChanged();
-}
-
-void MainWindow::setFloatVal(float &setValue, float newValue) {
-    setValue = newValue;
-    m_canvas->settingsChanged();
 }
 
 void MainWindow::onClearButtonClick() {

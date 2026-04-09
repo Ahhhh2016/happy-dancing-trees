@@ -10,10 +10,8 @@
 
 namespace {
 constexpr float kMinStrokePointSpacing = 2.0f; // minimum distance between points in a stroke
-constexpr float kBrushStampSpacing = 1.0f; // minimum distance between brush stamps
-const QColor kFillColor(240, 240, 240);
+const QColor kFillColor(245, 245, 245);
 const QColor kOutlineColor(0, 0, 0);
-const QColor kClosingCurveColor(214, 214, 214);
 
 bool isInsideCanvas(const QPointF &point, int width, int height) {
     return point.x() >= 0 && point.x() < width && point.y() >= 0 && point.y() < height;
@@ -29,11 +27,6 @@ void Canvas2D::init() {
     m_width = 500;
     m_height = 500;
     clearCanvas();
-    changeMask();
-}
-
-int Canvas2D::posToIndex(int x, int y, int width) {
-    return y * width + x;
 }
 
 void Canvas2D::clearCanvas() {
@@ -99,7 +92,6 @@ void Canvas2D::resize(int w, int h) {
 
 void Canvas2D::settingsChanged() {
     settings.saveSettings();
-    changeMask();
 }
 
 Eigen::Vector2f Canvas2D::toVector2D(const QPointF &point) const {
@@ -184,9 +176,6 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
 
     Region region = makeRegionFromStroke(stroke, closingCurve);
     m_strokes.push_back(stroke);
-    if (!closingCurve.points.empty()) {
-        m_strokes.push_back(closingCurve);
-    }
     m_regions.push_back(region);
     renderRegion(region);
 }
@@ -201,6 +190,32 @@ QImage Canvas2D::makeImageFromCanvasData() const {
         );
     }
     return image;
+}
+
+void Canvas2D::paintEvent(QPaintEvent *event) {
+    QLabel::paintEvent(event);
+
+    if (!m_activeStroke.has_value()) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    paintStrokePreview(painter, *m_activeStroke);
+}
+
+void Canvas2D::paintStrokePreview(QPainter &painter, const Stroke &stroke) const {
+    if (stroke.points.size() < 2) {
+        return;
+    }
+
+    QPainterPath path;
+    path.moveTo(toQPointF(stroke.points.front()));
+    for (std::size_t i = 1; i < stroke.points.size(); ++i) {
+        path.lineTo(toQPointF(stroke.points[i]));
+    }
+    painter.setPen(QPen(kOutlineColor, 2));
+    painter.drawPath(path);
 }
 
 void Canvas2D::loadCanvasDataFromImage(const QImage &image) {
@@ -237,26 +252,20 @@ void Canvas2D::renderRegion(const Region &region) {
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    QPainterPath path;
-    path.moveTo(toQPointF(openStroke.points.front()));
+    QPainterPath fillPath;
+    fillPath.moveTo(toQPointF(openStroke.points.front()));
     for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
-        path.lineTo(toQPointF(openStroke.points[i]));
+        fillPath.lineTo(toQPointF(openStroke.points[i]));
     }
-    path.closeSubpath();
+    fillPath.closeSubpath();
 
-    painter.fillPath(path, kFillColor);
+    painter.fillPath(fillPath, kFillColor);
     painter.setPen(QPen(kOutlineColor, 2));
-    painter.drawPath(path);
-
-    if (region.boundaries.size() > 1) {
-        const Stroke &closingCurve = region.boundaries[1];
-        if (closingCurve.points.size() == 2) {
-            painter.setPen(QPen(kClosingCurveColor, 2));
-            painter.drawLine(
-                toQPointF(closingCurve.points[0]),
-                toQPointF(closingCurve.points[1])
-            );
-        }
+    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
+        painter.drawLine(
+            toQPointF(openStroke.points[i - 1]),
+            toQPointF(openStroke.points[i])
+        );
     }
 
     painter.end();
@@ -264,80 +273,12 @@ void Canvas2D::renderRegion(const Region &region) {
     displayImage();
 }
 
-void Canvas2D::stampMask(int x, int y) {
-    int x_left = x - settings.brushRadius;
-    int x_right = x + settings.brushRadius;
-    int y_top = y - settings.brushRadius;
-    int y_bottom = y + settings.brushRadius;
-
-    int mask_width = 2 * settings.brushRadius + 1;
-
-    for (int i = x_left; i <= x_right; i++)
-    {
-        if (i < 0 || i >= m_width) continue;
-        for (int j = y_top; j <= y_bottom; j++)
-        {
-            if (j < 0 || j >= m_height) continue;
-
-            float opacity = mask_data.at(posToIndex(i - x_left, j - y_top, mask_width));
-            RGBA canvasColor = m_data.at(posToIndex(i, j, m_width));
-            m_data.at(posToIndex(i, j, m_width)) = colorBlending(settings.brushColor, canvasColor, opacity);
-        }
-    }
-}
-
-void Canvas2D::drawMask(int x, int y) {
-    stampMask(x, y);
-    displayImage();
-}
-
-// interpolate between points to control the density of the brush stamps to better show the stroke on canvas
-void Canvas2D::drawInterpolatedSegment(const QPointF &from, const QPointF &to) {
-    const float dx = static_cast<float>(to.x() - from.x());
-    const float dy = static_cast<float>(to.y() - from.y());
-    const float distance = std::sqrt(dx * dx + dy * dy);
-    if (distance < kMinStrokePointSpacing) {
-        return;
-    }
-
-    const int steps = std::max(1, static_cast<int>(std::ceil(distance / kBrushStampSpacing)));
-    for (int i = 1; i <= steps; ++i) {
-        const float t = static_cast<float>(i) / static_cast<float>(steps);
-        const QPointF interpolated = from + (to - from) * t;
-        stampMask(static_cast<int>(std::lround(interpolated.x())),
-                  static_cast<int>(std::lround(interpolated.y())));
-    }
-
-    displayImage();
-}
-
-void Canvas2D::changeMask() {
-    int mask_width = 2 * settings.brushRadius + 1;
-    mask_data.assign(mask_width * mask_width, 0);
-
-    for (int i = 0; i < mask_width; i++)
-    {
-        for (int j = 0; j < mask_width; j++)
-        {
-            float distance = std::sqrt((i - settings.brushRadius) * (i - settings.brushRadius) + (j - settings.brushRadius) * (j -settings.brushRadius));
-
-            if (distance <= settings.brushRadius)
-            {
-                mask_data.at(posToIndex(i, j, mask_width)) = 1;
-            }
-            else mask_data.at(posToIndex(i, j, mask_width)) = 0;
-        }
-    }
-}
-
 void Canvas2D::mouseDown(const QPointF &point) {
     if (isInsideCanvas(point, m_width, m_height))
     {
         beginStroke(point);
-        int x = static_cast<int>(point.x());
-        int y = static_cast<int>(point.y());
-        drawMask(x, y);
         m_isDown = true;
+        update();
     }
 }
 
@@ -347,32 +288,17 @@ void Canvas2D::mouseDragged(const QPointF &point) {
         if (!m_activeStroke.has_value() || m_activeStroke->points.empty()) {
             return;
         }
-
-        const QPointF lastPoint = toQPointF(m_activeStroke->points.back());
         appendPointToActiveStroke(point);
-        drawInterpolatedSegment(lastPoint, point);
+        update();
     }
 }
 
 void Canvas2D::mouseUp(const QPointF &point) {
     if (m_isDown && isInsideCanvas(point, m_width, m_height)) {
-        if (m_activeStroke.has_value() && !m_activeStroke->points.empty()) {
-            const QPointF lastPoint = toQPointF(m_activeStroke->points.back());
-            appendPointToActiveStroke(point);
-            drawInterpolatedSegment(lastPoint, point);
-        } else {
-            appendPointToActiveStroke(point);
-        }
+        appendPointToActiveStroke(point);
     }
 
     m_isDown = false;
     finishStroke();
-}
-
-RGBA Canvas2D::colorBlending(RGBA brush, RGBA canvas, float opacity) {
-    RGBA res;
-    float a = float(brush.a / 255.0);
-    res = brush * (opacity * a) + canvas * (1 - opacity * a) + 0.5f;
-    res.a = brush.a;
-    return res;
+    update();
 }

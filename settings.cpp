@@ -21,16 +21,7 @@ Settings settings;
  * @brief Loads the application settings
  */
 void Settings::loadSettingsOrDefaults() {
-    // Load image settings
-    // Load image settings
     QSettings s("CS123", "CS123");
-
-    brushRadius = s.value("brushRadius", 10).toInt();
-    brushColor.r = s.value("brushRed", 0).toInt();
-    brushColor.g = s.value("brushGreen", 0).toInt();
-    brushColor.b = s.value("brushBlue", 0).toInt();
-    brushColor.a = s.value("brushAlpha", 255).toInt();
-
     imagePath = s.value("imagePath", "").toString();
 }
 
@@ -40,12 +31,5 @@ void Settings::loadSettingsOrDefaults() {
  */
 void Settings::saveSettings() {
     QSettings s("CS123", "CS123");
-
-    s.setValue("brushRadius", brushRadius);
-    s.setValue("brushRed", brushColor.r);
-    s.setValue("brushGreen", brushColor.g);
-    s.setValue("brushBlue", brushColor.b);
-    s.setValue("brushAlpha", brushColor.a);
-
     s.setValue("imagePath", imagePath);
 }
