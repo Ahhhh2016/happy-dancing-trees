@@ -9,6 +9,8 @@
 #include "rgba.h"
 #include "monster.h"
 
+class QImage;
+
 class Canvas2D : public QLabel {
     Q_OBJECT
 public:
@@ -71,6 +73,9 @@ private:
     Stroke makeClosingCurve(const Stroke &openStroke) const;
     Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
     void commitStrokeAsRegion(const Stroke &stroke);
+    QImage makeImageFromCanvasData() const;
+    void loadCanvasDataFromImage(const QImage &image);
+    void renderRegion(const Region &region);
     void stampMask(int x, int y);
     void drawInterpolatedSegment(const QPointF &from, const QPointF &to);
 };

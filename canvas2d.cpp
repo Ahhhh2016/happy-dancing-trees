@@ -1,5 +1,6 @@
 #include "canvas2d.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <algorithm>
@@ -10,6 +11,9 @@
 namespace {
 constexpr float kMinStrokePointSpacing = 2.0f; // minimum distance between points in a stroke
 constexpr float kBrushStampSpacing = 1.0f; // minimum distance between brush stamps
+const QColor kFillColor(240, 240, 240);
+const QColor kOutlineColor(0, 0, 0);
+const QColor kClosingCurveColor(214, 214, 214);
 
 bool isInsideCanvas(const QPointF &point, int width, int height) {
     return point.x() >= 0 && point.x() < width && point.y() >= 0 && point.y() < height;
@@ -184,6 +188,80 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
         m_strokes.push_back(closingCurve);
     }
     m_regions.push_back(region);
+    renderRegion(region);
+}
+
+QImage Canvas2D::makeImageFromCanvasData() const {
+    QImage image(m_width, m_height, QImage::Format_RGBX8888);
+    for (int i = 0; i < static_cast<int>(m_data.size()); ++i) {
+        image.setPixelColor(
+            i % m_width,
+            i / m_width,
+            QColor(m_data[i].r, m_data[i].g, m_data[i].b, m_data[i].a)
+        );
+    }
+    return image;
+}
+
+void Canvas2D::loadCanvasDataFromImage(const QImage &image) {
+    QImage converted = image.convertToFormat(QImage::Format_RGBX8888);
+    m_data.clear();
+    m_data.reserve(converted.width() * converted.height());
+
+    QByteArray arr = QByteArray::fromRawData(
+        reinterpret_cast<const char *>(converted.bits()),
+        converted.sizeInBytes()
+    );
+
+    for (int i = 0; i < arr.size() / 4; ++i) {
+        m_data.push_back(RGBA{
+            static_cast<std::uint8_t>(arr[4 * i]),
+            static_cast<std::uint8_t>(arr[4 * i + 1]),
+            static_cast<std::uint8_t>(arr[4 * i + 2]),
+            static_cast<std::uint8_t>(arr[4 * i + 3])
+        });
+    }
+}
+
+void Canvas2D::renderRegion(const Region &region) {
+    if (region.boundaries.empty()) {
+        return;
+    }
+
+    const Stroke &openStroke = region.boundaries.front();
+    if (openStroke.points.size() < 2) {
+        return;
+    }
+
+    QImage image = makeImageFromCanvasData();
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath path;
+    path.moveTo(toQPointF(openStroke.points.front()));
+    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
+        path.lineTo(toQPointF(openStroke.points[i]));
+    }
+    path.closeSubpath();
+
+    painter.fillPath(path, kFillColor);
+    painter.setPen(QPen(kOutlineColor, 2));
+    painter.drawPath(path);
+
+    if (region.boundaries.size() > 1) {
+        const Stroke &closingCurve = region.boundaries[1];
+        if (closingCurve.points.size() == 2) {
+            painter.setPen(QPen(kClosingCurveColor, 2));
+            painter.drawLine(
+                toQPointF(closingCurve.points[0]),
+                toQPointF(closingCurve.points[1])
+            );
+        }
+    }
+
+    painter.end();
+    loadCanvasDataFromImage(image);
+    displayImage();
 }
 
 void Canvas2D::stampMask(int x, int y) {
