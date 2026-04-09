@@ -34,8 +34,8 @@ struct Region {
 class monster {
 public:
     monster();
-    Stroke makeDummyBody();
-    Stroke makeDummyLeg();
+    // Stroke makeDummyBody();
+    // Stroke makeDummyLeg();
 };
 
 
