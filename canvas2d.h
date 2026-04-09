@@ -5,7 +5,9 @@
 #include <QMouseEvent>
 #include <array>
 #include <chrono>
+#include <optional>
 #include "rgba.h"
+#include "monster.h"
 
 class Canvas2D : public QLabel {
     Q_OBJECT
@@ -27,30 +29,32 @@ public:
     void settingsChanged();
 
     std::vector<RGBA> &getCanvasData() {return m_data;}
+    const std::vector<Stroke> &getStrokes() const { return m_strokes; }
+    const std::optional<Stroke> &getActiveStroke() const { return m_activeStroke; }
 
 private:
     std::vector<RGBA> m_data;
     std::vector<float> mask_data;
+    std::vector<Stroke> m_strokes;
+    std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
+    int m_nextDepthOrder = 0;
 
-    void mouseDown(int x, int y);
-    void mouseDragged(int x, int y);
-    void mouseUp(int x, int y);
+    void mouseDown(const QPointF &point);
+    void mouseDragged(const QPointF &point);
+    void mouseUp(const QPointF &point);
 
     // These are functions overriden from QWidget that we've provided
     // to prevent you from having to interact with Qt's mouse events.
     // These will pass the mouse coordinates to the above mouse functions
     // that you will have to fill in.
     virtual void mousePressEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseDown(static_cast<int>(x), static_cast<int>(y));
+        mouseDown(event->position());
     }
     virtual void mouseMoveEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseDragged(static_cast<int>(x), static_cast<int>(y));
+        mouseDragged(event->position());
     }
     virtual void mouseReleaseEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseUp(static_cast<int>(x), static_cast<int>(y));
+        mouseUp(event->position());
     }
 
     // TODO: add any member variables or functions you need
@@ -58,6 +62,13 @@ private:
     void drawMask(int x, int y);
     RGBA colorBlending(RGBA brush, RGBA canvas, float opacity);
     void changeMask();
+
+    Eigen::Vector2f toVector2D(const QPointF &point) const;
+    void beginStroke(const QPointF &point);
+    void appendPointToActiveStroke(const QPointF &point);
+    void finishStroke();
+    void stampMask(int x, int y);
+    void drawInterpolatedSegment(const QPointF &from, const QPointF &to);
 };
 
 #endif // CANVAS2D_H
