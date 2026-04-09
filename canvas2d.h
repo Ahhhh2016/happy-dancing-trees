@@ -36,6 +36,7 @@ private:
     std::vector<RGBA> m_data;
     std::vector<float> mask_data;
     std::vector<Stroke> m_strokes;
+    std::vector<Region> m_regions;
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
     int m_nextDepthOrder = 0;
 
@@ -67,6 +68,9 @@ private:
     void beginStroke(const QPointF &point);
     void appendPointToActiveStroke(const QPointF &point);
     void finishStroke();
+    Stroke makeClosingCurve(const Stroke &openStroke) const;
+    Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
+    void commitStrokeAsRegion(const Stroke &stroke);
     void stampMask(int x, int y);
     void drawInterpolatedSegment(const QPointF &from, const QPointF &to);
 };

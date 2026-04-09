@@ -9,6 +9,15 @@ struct Stroke {
     bool isClosingCurve = false;
     bool isMergingBoundary = false;
     int depthOrder = 0;
+
+    bool isClosed(float eps = 1e-3f) const {
+        if (points.size() < 3) {
+            return false;
+        }
+
+        const Eigen::Vector2f delta = points.front() - points.back();
+        return delta.squaredNorm() <= eps * eps;
+    }
 };
 
 struct Region {

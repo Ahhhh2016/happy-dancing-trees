@@ -35,6 +35,7 @@ int Canvas2D::posToIndex(int x, int y, int width) {
 void Canvas2D::clearCanvas() {
     m_data.assign(m_width * m_height, RGBA{255, 255, 255, 255});
     m_strokes.clear();
+    m_regions.clear();
     m_activeStroke.reset();
     m_nextDepthOrder = 0;
     settings.imagePath = "";
@@ -58,6 +59,7 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
         m_data.push_back(RGBA{(std::uint8_t) arr[4*i], (std::uint8_t) arr[4*i+1], (std::uint8_t) arr[4*i+2], (std::uint8_t) arr[4*i+3]});
     }
     m_strokes.clear();
+    m_regions.clear();
     m_activeStroke.reset();
     m_nextDepthOrder = 0;
     displayImage();
@@ -136,10 +138,52 @@ void Canvas2D::finishStroke() {
         return;
     }
 
-    if (!m_activeStroke->points.empty()) {
-        m_strokes.push_back(*m_activeStroke);
+    Stroke stroke = *m_activeStroke;
+    if (!stroke.points.empty()) {
+        commitStrokeAsRegion(stroke);
     }
     m_activeStroke.reset();
+}
+
+Stroke Canvas2D::makeClosingCurve(const Stroke &openStroke) const {
+    Stroke closing;
+    if (openStroke.points.size() < 2) {
+        return closing;
+    }
+
+    closing.points.push_back(openStroke.points.back());
+    closing.points.push_back(openStroke.points.front());
+    closing.isClosingCurve = true;
+    closing.depthOrder = openStroke.depthOrder;
+    return closing;
+}
+
+Region Canvas2D::makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const {
+    Region region;
+    region.depthOrder = openStroke.depthOrder;
+    region.boundaries.push_back(openStroke);
+    if (!closingCurve.points.empty()) {
+        region.boundaries.push_back(closingCurve);
+    }
+    return region;
+}
+
+void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
+    if (stroke.points.size() < 2) {
+        return;
+    }
+
+    Stroke closingCurve;
+    if (!stroke.isClosed()) {
+        closingCurve = makeClosingCurve(stroke);
+    }
+
+    Region region = makeRegionFromStroke(stroke, closingCurve);
+    m_strokes.push_back(stroke);
+    if (!closingCurve.points.empty()) {
+        m_strokes.push_back(closingCurve);
+    }
+    m_regions.push_back(region);
 }
 
 void Canvas2D::stampMask(int x, int y) {
