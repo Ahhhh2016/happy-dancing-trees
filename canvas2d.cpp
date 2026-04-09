@@ -201,6 +201,15 @@ void Canvas2D::finishStroke() {
     m_activeStroke.reset();
 }
 
+bool Canvas2D::intersectsExistingStrokes(const Stroke &stroke) const {
+    for (const Stroke &existingStroke : m_strokes) {
+        if (strokesIntersect(stroke, existingStroke)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Stroke Canvas2D::makeClosingCurve(const Stroke &openStroke) const {
     Stroke closing;
     if (openStroke.points.size() < 2) {
@@ -246,6 +255,7 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     Stroke closingCurve;
     if (!depthAssignedStroke.isClosed()) {
         closingCurve = makeClosingCurve(depthAssignedStroke);
+        closingCurve.isMergingBoundary = intersectsExistingStrokes(closingCurve);
     }
 
     Region region = makeRegionFromStroke(depthAssignedStroke, closingCurve);

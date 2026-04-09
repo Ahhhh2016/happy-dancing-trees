@@ -66,6 +66,7 @@ private:
     void beginStroke(const QPointF &point);
     void appendPointToActiveStroke(const QPointF &point);
     void finishStroke();
+    bool intersectsExistingStrokes(const Stroke &stroke) const;
     Stroke makeClosingCurve(const Stroke &openStroke) const;
     Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
     int computeDepthOrderForStroke(const Stroke &stroke) const;
