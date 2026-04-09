@@ -41,7 +41,6 @@ private:
     std::vector<Stroke> m_strokes;
     std::vector<Region> m_regions;
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
-    int m_nextDepthOrder = 0;
 
     void mouseDown(const QPointF &point);
     void mouseDragged(const QPointF &point);
@@ -69,6 +68,7 @@ private:
     void finishStroke();
     Stroke makeClosingCurve(const Stroke &openStroke) const;
     Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
+    int computeDepthOrderForStroke(const Stroke &stroke) const;
     void commitStrokeAsRegion(const Stroke &stroke);
     QImage makeImageFromCanvasData() const;
     void loadCanvasDataFromImage(const QImage &image);

@@ -6,8 +6,11 @@
 
 struct Stroke {
     std::vector<Eigen::Vector2f> points;
-    bool isClosingCurve = false;
+    bool isClosingCurve = false; 
     bool isMergingBoundary = false;
+    // Depth is assigned when a stroke is committed:
+    // if it does not intersect any previous stroke, depthOrder is 0;
+    // otherwise it is max(intersecting previous strokes' depthOrder) + 1.
     int depthOrder = 0;
 
     bool isClosed(float eps = 1e-3f) const {
@@ -21,7 +24,10 @@ struct Stroke {
 };
 
 struct Region {
-    std::vector<Stroke> boundaries;
+    std::vector<Stroke> boundaries; 
+    // closing curves only stores in boundaries
+
+    // Regions inherit the depthOrder of their open stroke boundary.
     int depthOrder = 0;
 };
 
