@@ -14,7 +14,7 @@
 
 `Region` represents an area enclosed by boundaries. It stores its edges in `boundaries`, which is a list of `Stroke` objects. In this project, a region usually comes from one user-drawn open stroke plus a generated closing curve. A region also has a `depthOrder`, inherited from its main stroke, so the program can reason about layering.
 
-`std::vector<Region> m_regions` stores all regions.
+`std::vector<Region> m_regions` stores all regions. If the main stroke is open, the region keeps a generated closing curve inside `boundaries` as a `Stroke` with `isClosingCurve = true`; this closing curve stores only two points, connecting the end of the open stroke back to its start, rather than being stored in `m_strokes`. If the stroke is already closed, no extra closing curve is generated.
 
 ## How to show strokes on canvas
 
