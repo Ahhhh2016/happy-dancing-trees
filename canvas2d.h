@@ -16,13 +16,6 @@ public:
     // Mouse parameters
     bool m_isDown = false;
 
-    // For speed brush
-    int m_lastX = -1;
-    int m_lastY = -1;
-    double m_mouseSpeed = 0.0; // pixel speed per ms
-    std::chrono::steady_clock::time_point m_lastTime;
-    int m_speedRadius;
-
     void init();
     void clearCanvas();
     bool loadImageFromFile(const QString &file);
@@ -33,20 +26,11 @@ public:
     // This will be called when the settings have changed
     void settingsChanged();
 
-    // Filter TODO: implement
-    void filterImage();
-
-    // fucntions added
     std::vector<RGBA> &getCanvasData() {return m_data;}
 
 private:
     std::vector<RGBA> m_data;
     std::vector<float> mask_data;
-    std::vector<RGBA> pre_data;
-    std::vector<std::pair<int, int> > points;
-
-    // For fixAlphaBlending
-    std::vector<float> m_accumulatedAlpha;
 
     void mouseDown(int x, int y);
     void mouseDragged(int x, int y);
@@ -73,19 +57,7 @@ private:
     int posToIndex(int x, int y, int width);
     void drawMask(int x, int y);
     RGBA colorBlending(RGBA brush, RGBA canvas, float opacity);
-    RGBA colorBlendingSmudge(RGBA brush, RGBA canvas, float opacity);
     void changeMask();
-    void changePreDataType();
-    void saveData(int x, int y);
-
-    // Spray paint brush
-    void initSrand();
-    void drawSprayPaint(int x, int y);
-    void spray();
-
-    // Speed brush
-    double calculateMouseSpeed(int x, int y);
-    int mapSpeedToRadius(double speed);
 };
 
 #endif // CANVAS2D_H
