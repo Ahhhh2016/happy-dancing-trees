@@ -5,7 +5,13 @@
 #include <QMouseEvent>
 #include <array>
 #include <chrono>
+#include <optional>
 #include "rgba.h"
+#include "monster.h"
+
+class QImage;
+class QPainter;
+class QPaintEvent;
 
 class Canvas2D : public QLabel {
     Q_OBJECT
@@ -15,13 +21,6 @@ public:
 
     // Mouse parameters
     bool m_isDown = false;
-
-    // For speed brush
-    int m_lastX = -1;
-    int m_lastY = -1;
-    double m_mouseSpeed = 0.0; // pixel speed per ms
-    std::chrono::steady_clock::time_point m_lastTime;
-    int m_speedRadius;
 
     void init();
     void clearCanvas();
@@ -33,59 +32,49 @@ public:
     // This will be called when the settings have changed
     void settingsChanged();
 
-    // Filter TODO: implement
-    void filterImage();
-
-    // fucntions added
     std::vector<RGBA> &getCanvasData() {return m_data;}
+    const std::vector<Stroke> &getStrokes() const { return m_strokes; }
+    const std::optional<Stroke> &getActiveStroke() const { return m_activeStroke; }
 
 private:
     std::vector<RGBA> m_data;
-    std::vector<float> mask_data;
-    std::vector<RGBA> pre_data;
-    std::vector<std::pair<int, int> > points;
+    std::vector<Stroke> m_strokes;
+    std::vector<Region> m_regions;
+    std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
 
-    // For fixAlphaBlending
-    std::vector<float> m_accumulatedAlpha;
-
-    void mouseDown(int x, int y);
-    void mouseDragged(int x, int y);
-    void mouseUp(int x, int y);
+    void mouseDown(const QPointF &point);
+    void mouseDragged(const QPointF &point);
+    void mouseUp(const QPointF &point);
 
     // These are functions overriden from QWidget that we've provided
     // to prevent you from having to interact with Qt's mouse events.
     // These will pass the mouse coordinates to the above mouse functions
     // that you will have to fill in.
     virtual void mousePressEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseDown(static_cast<int>(x), static_cast<int>(y));
+        mouseDown(event->position());
     }
     virtual void mouseMoveEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseDragged(static_cast<int>(x), static_cast<int>(y));
+        mouseDragged(event->position());
     }
     virtual void mouseReleaseEvent(QMouseEvent* event) override {
-        auto [x, y] = std::array{ event->position().x(), event->position().y() };
-        mouseUp(static_cast<int>(x), static_cast<int>(y));
+        mouseUp(event->position());
     }
+    virtual void paintEvent(QPaintEvent *event) override;
 
     // TODO: add any member variables or functions you need
-    int posToIndex(int x, int y, int width);
-    void drawMask(int x, int y);
-    RGBA colorBlending(RGBA brush, RGBA canvas, float opacity);
-    RGBA colorBlendingSmudge(RGBA brush, RGBA canvas, float opacity);
-    void changeMask();
-    void changePreDataType();
-    void saveData(int x, int y);
-
-    // Spray paint brush
-    void initSrand();
-    void drawSprayPaint(int x, int y);
-    void spray();
-
-    // Speed brush
-    double calculateMouseSpeed(int x, int y);
-    int mapSpeedToRadius(double speed);
+    Eigen::Vector2f toVector2D(const QPointF &point) const;
+    void beginStroke(const QPointF &point);
+    void appendPointToActiveStroke(const QPointF &point);
+    void finishStroke();
+    bool intersectsExistingStrokes(const Stroke &stroke) const;
+    Stroke makeClosingCurve(const Stroke &openStroke) const;
+    Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
+    int computeDepthOrderForStroke(const Stroke &stroke) const;
+    void commitStrokeAsRegion(const Stroke &stroke);
+    QImage makeImageFromCanvasData() const;
+    void loadCanvasDataFromImage(const QImage &image);
+    void renderRegion(const Region &region);
+    void paintStrokePreview(QPainter &painter, const Stroke &stroke) const;
 };
 
 #endif // CANVAS2D_H
