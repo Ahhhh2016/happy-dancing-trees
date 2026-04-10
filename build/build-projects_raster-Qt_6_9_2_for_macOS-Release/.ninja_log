@@ -1,0 +1,14 @@
+# ninja log v6
+2	10	1775601522164506466	CMakeFiles/clean.additional	6239da10cd73c644
+10	14	1775601522172158595	clean	d1d9629add164b5c
+12	615	1775601778693998609	projects_raster_autogen/timestamp	a5e859cd59a8a316
+12	615	1775601778693998609	projects_raster_autogen/mocs_compilation.cpp	a5e859cd59a8a316
+12	615	1775601778693998609	/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Release/projects_raster_autogen/timestamp	a5e859cd59a8a316
+616	1535	1775601778704261905	CMakeFiles/projects_raster.dir/projects_raster_autogen/mocs_compilation.cpp.o	760368c9f61ede12
+616	1365	1775601778704701738	CMakeFiles/projects_raster.dir/settings.cpp.o	be442f24f7a84ecf
+1944	2046	1775601780031995029	projects_raster	99bc2b3de70f1367
+617	1621	1775601778704849572	CMakeFiles/projects_raster.dir/canvas2d.cpp.o	57988b54fbcc53d2
+12	615	1775601778693998609	/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Release/projects_raster_autogen/mocs_compilation.cpp	a5e859cd59a8a316
+616	1944	1775601778704579613	CMakeFiles/projects_raster.dir/mainwindow.cpp.o	7ff763ab0a09c367
+616	1465	1775601778704441322	CMakeFiles/projects_raster.dir/main.cpp.o	33170b346194b463
+617	1377	1775601778705099364	CMakeFiles/projects_raster.dir/monster.cpp.o	232fbbac88220b88

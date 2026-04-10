@@ -1,0 +1,2 @@
+set(__QT_DEPLOY_TARGET_projects_raster_FILE /Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/projects_raster)
+set(__QT_DEPLOY_TARGET_projects_raster_TYPE EXECUTABLE)
