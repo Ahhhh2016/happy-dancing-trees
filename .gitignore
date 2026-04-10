@@ -1,0 +1,21 @@
+# Build directories and generated files
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Testing/
+/*.ninja
+/*.log
+/*.user
+/*.user.*
+
+# Qt Creator generated files
+*.pro.user
+*.pro.user.*
+
+# OS generated files
+.DS_Store
+
+# Ignore IDE/editor files
+.idea/
+.vscode/

@@ -1,5 +1,0 @@
-/Users/jake/brownCS/cs2240/happy-dancing-trees/build/build-happy-dancing-trees-Qt_6_5_2_for_macOS-Release/CMakeFiles/projects_raster.dir
-/Users/jake/brownCS/cs2240/happy-dancing-trees/build/build-happy-dancing-trees-Qt_6_5_2_for_macOS-Release/CMakeFiles/edit_cache.dir
-/Users/jake/brownCS/cs2240/happy-dancing-trees/build/build-happy-dancing-trees-Qt_6_5_2_for_macOS-Release/CMakeFiles/rebuild_cache.dir
-/Users/jake/brownCS/cs2240/happy-dancing-trees/build/build-happy-dancing-trees-Qt_6_5_2_for_macOS-Release/CMakeFiles/projects_raster_autogen_timestamp_deps.dir
-/Users/jake/brownCS/cs2240/happy-dancing-trees/build/build-happy-dancing-trees-Qt_6_5_2_for_macOS-Release/CMakeFiles/projects_raster_autogen.dir

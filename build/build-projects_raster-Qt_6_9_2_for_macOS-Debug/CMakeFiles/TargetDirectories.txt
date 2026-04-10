@@ -1,5 +1,0 @@
-/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/CMakeFiles/projects_raster.dir
-/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/CMakeFiles/edit_cache.dir
-/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/CMakeFiles/rebuild_cache.dir
-/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/CMakeFiles/projects_raster_autogen_timestamp_deps.dir
-/Users/sueanpark/Desktop/cs2240/happy-dancing-trees/build/build-projects_raster-Qt_6_9_2_for_macOS-Debug/CMakeFiles/projects_raster_autogen.dir
