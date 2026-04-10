@@ -1,58 +1,106 @@
 #include "canvas2d.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <algorithm>
 #include <iostream>
+#include <cmath>
 #include "settings.h"
 
-/**
- * @brief Initializes new 500x500 canvas
- */
+namespace {
+constexpr float kMinStrokePointSpacing = 2.0f; // minimum distance between points in a stroke
+constexpr float kIntersectionEpsilon = 1e-4f;
+const QColor kFillColor(245, 245, 245);
+const QColor kOutlineColor(0, 0, 0);
+
+bool isInsideCanvas(const QPointF &point, int width, int height) {
+    return point.x() >= 0 && point.x() < width && point.y() >= 0 && point.y() < height;
+}
+
+QPointF toQPointF(const Eigen::Vector2f &point) {
+    return QPointF(point.x(), point.y());
+}
+
+float cross2D(const Eigen::Vector2f &a, const Eigen::Vector2f &b, const Eigen::Vector2f &c) {
+    const Eigen::Vector2f ab = b - a;
+    const Eigen::Vector2f ac = c - a;
+    return ab.x() * ac.y() - ab.y() * ac.x();
+}
+
+bool isPointOnSegment(const Eigen::Vector2f &point,
+                      const Eigen::Vector2f &segmentStart,
+                      const Eigen::Vector2f &segmentEnd) {
+    if (std::abs(cross2D(segmentStart, segmentEnd, point)) > kIntersectionEpsilon) {
+        return false;
+    }
+
+    const float minX = std::min(segmentStart.x(), segmentEnd.x()) - kIntersectionEpsilon;
+    const float maxX = std::max(segmentStart.x(), segmentEnd.x()) + kIntersectionEpsilon;
+    const float minY = std::min(segmentStart.y(), segmentEnd.y()) - kIntersectionEpsilon;
+    const float maxY = std::max(segmentStart.y(), segmentEnd.y()) + kIntersectionEpsilon;
+    return point.x() >= minX && point.x() <= maxX && point.y() >= minY && point.y() <= maxY;
+}
+
+bool segmentsIntersect(const Eigen::Vector2f &aStart,
+                       const Eigen::Vector2f &aEnd,
+                       const Eigen::Vector2f &bStart,
+                       const Eigen::Vector2f &bEnd) {
+    const float d1 = cross2D(aStart, aEnd, bStart);
+    const float d2 = cross2D(aStart, aEnd, bEnd);
+    const float d3 = cross2D(bStart, bEnd, aStart);
+    const float d4 = cross2D(bStart, bEnd, aEnd);
+
+    const bool straddlesA = (d1 > kIntersectionEpsilon && d2 < -kIntersectionEpsilon) ||
+                            (d1 < -kIntersectionEpsilon && d2 > kIntersectionEpsilon);
+    const bool straddlesB = (d3 > kIntersectionEpsilon && d4 < -kIntersectionEpsilon) ||
+                            (d3 < -kIntersectionEpsilon && d4 > kIntersectionEpsilon);
+    if (straddlesA && straddlesB) {
+        return true;
+    }
+
+    return isPointOnSegment(bStart, aStart, aEnd) ||
+           isPointOnSegment(bEnd, aStart, aEnd) ||
+           isPointOnSegment(aStart, bStart, bEnd) ||
+           isPointOnSegment(aEnd, bStart, bEnd);
+}
+
+bool strokesIntersect(const Stroke &first, const Stroke &second) {
+    if (first.points.size() < 2 || second.points.size() < 2) {
+        return false;
+    }
+
+    for (std::size_t i = 1; i < first.points.size(); ++i) {
+        const Eigen::Vector2f &aStart = first.points[i - 1];
+        const Eigen::Vector2f &aEnd = first.points[i];
+        for (std::size_t j = 1; j < second.points.size(); ++j) {
+            const Eigen::Vector2f &bStart = second.points[j - 1];
+            const Eigen::Vector2f &bEnd = second.points[j];
+            if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+}
+
 void Canvas2D::init() {
     setMouseTracking(true);
     m_width = 500;
     m_height = 500;
     clearCanvas();
-
-    changePreDataType();
-    changeMask();
-
-    if (settings.brushType == BRUSH_SPRAY)
-    {
-        initSrand();
-    }
 }
 
-// Call this function when settings are changed
-void Canvas2D::changePreDataType() {
-    int mask_width = settings.brushRadius * 2 + 1;
-    pre_data.assign(mask_width * mask_width, RGBA{255, 255, 255, 255});
-}
-
-// Convert an (x, y) position
-//         into an index you can use to index into the array of canvas data.
-int Canvas2D::posToIndex(int x, int y, int width) {
-    int index = y * width + x;
-    return index;
-}
-
-
-/**
- * @brief Canvas2D::clearCanvas sets all canvas pixels to blank white
- */
 void Canvas2D::clearCanvas() {
     m_data.assign(m_width * m_height, RGBA{255, 255, 255, 255});
+    m_strokes.clear();
+    m_regions.clear();
+    m_activeStroke.reset();
     settings.imagePath = "";
     displayImage();
 }
 
-/**
- * @brief Stores the image specified from the input file in this class's
- * `std::vector<RGBA> m_image`.
- * Also saves the image width and height to canvas width and height respectively.
- * @param file: file path to an image
- * @return True if successfully loads image, False otherwise.
- */
 bool Canvas2D::loadImageFromFile(const QString &file) {
     QImage myImage;
     if (!myImage.load(file)) {
@@ -69,15 +117,13 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
     for (int i = 0; i < arr.size() / 4; i++){
         m_data.push_back(RGBA{(std::uint8_t) arr[4*i], (std::uint8_t) arr[4*i+1], (std::uint8_t) arr[4*i+2], (std::uint8_t) arr[4*i+3]});
     }
+    m_strokes.clear();
+    m_regions.clear();
+    m_activeStroke.reset();
     displayImage();
     return true;
 }
 
-/**
- * @brief Saves the current canvas image to the specified file path.
- * @param file: file path to save image to
- * @return True if successfully saves image, False otherwise.
- */
 bool Canvas2D::saveImageToFile(const QString &file) {
     QImage myImage = QImage(m_width, m_height, QImage::Format_RGBX8888);
     for (int i = 0; i < m_data.size(); i++){
@@ -90,10 +136,6 @@ bool Canvas2D::saveImageToFile(const QString &file) {
     return true;
 }
 
-
-/**
- * @brief Get Canvas2D's image data and display this to the GUI
- */
 void Canvas2D::displayImage() {
     QByteArray img(reinterpret_cast<const char *>(m_data.data()), 4 * m_data.size());
     QImage now = QImage((const uchar*)img.data(), m_width, m_height, QImage::Format_RGBX8888);
@@ -102,11 +144,6 @@ void Canvas2D::displayImage() {
     update();
 }
 
-/**
- * @brief Canvas2D::resize resizes canvas to new width and height
- * @param w
- * @param h
- */
 void Canvas2D::resize(int w, int h) {
     m_width = w;
     m_height = h;
@@ -114,307 +151,238 @@ void Canvas2D::resize(int w, int h) {
     displayImage();
 }
 
-/**
- * @brief Called when the filter button is pressed in the UI
- */
-void Canvas2D::filterImage() {
-    // Filter TODO: apply the currently selected filter to the loaded image
-}
-
-/**
- * @brief Called when any of the parameters in the UI are modified.
- */
 void Canvas2D::settingsChanged() {
-    // this saves your UI settings locally to load next time you run the program
     settings.saveSettings();
-
-    // TODO: fill in what you need to do when brush or filter parameters change
-    changeMask();
-    changePreDataType();
-
-    if (settings.brushType == BRUSH_SPRAY) initSrand();
 }
 
+Eigen::Vector2f Canvas2D::toVector2D(const QPointF &point) const {
+    return Eigen::Vector2f(static_cast<float>(point.x()), static_cast<float>(point.y()));
+}
 
-// Called when mouse down and mouse moved.
-// Used to save the previous data on canvas for smudge brush and fix alpha blending
-void Canvas2D::saveData(int x, int y) {
-    int x_left = x - settings.brushRadius;
-    int x_right = x + settings.brushRadius;
-    int y_top = y - settings.brushRadius;
-    int y_bottom = y + settings.brushRadius;
+void Canvas2D::beginStroke(const QPointF &point) {
+    Stroke stroke;
+    stroke.points.push_back(toVector2D(point));
+    m_activeStroke = stroke;
+}
 
-    int mask_width = 2 * settings.brushRadius + 1;
+// interpolate between points to control the density of the stroke saved
+void Canvas2D::appendPointToActiveStroke(const QPointF &point) {
+    if (!m_activeStroke.has_value()) {
+        return;
+    }
 
+    const QPointF lastPoint = toQPointF(m_activeStroke->points.back());
+    const float dx = static_cast<float>(point.x() - lastPoint.x());
+    const float dy = static_cast<float>(point.y() - lastPoint.y());
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance < kMinStrokePointSpacing) {
+        return;
+    }
 
-    for (int i = x_left; i <= x_right; i++)
-    {
-        for (int j = y_top; j <= y_bottom; j++)
-        {
-            if (i < 0 || i >= m_width || j < 0 || j >= m_width)
-            {
-                pre_data.at(posToIndex(i - x_left, j - y_top, mask_width)) = RGBA(255, 255, 255, 255);
-                continue;
-            }
-
-            pre_data.at(posToIndex(i - x_left, j - y_top, mask_width)) = m_data.at(posToIndex(i, j, m_width));
-        }
+    // interpolate between points to make the stroke smoother
+    const int steps = std::max(1, static_cast<int>(std::floor(distance / kMinStrokePointSpacing)));
+    // add points between the last point and the new point
+    for (int i = 1; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const QPointF interpolated = lastPoint + (point - lastPoint) * t;
+        m_activeStroke->points.push_back(toVector2D(interpolated));
     }
 }
 
-
-// Draw on the canvas. The inputs of this function are
-//         the x and y coordinates of the center of the drawing point
-void Canvas2D::drawMask(int x, int y) {
-    int x_left = x - settings.brushRadius;
-    int x_right = x + settings.brushRadius;
-    int y_top = y - settings.brushRadius;
-    int y_bottom = y + settings.brushRadius;
-
-    int mask_width = 2 * settings.brushRadius + 1;
-
-    if (settings.fixAlphaBlending) { // Save the canvas data before drawing
-        saveData(x, y);
+void Canvas2D::finishStroke() {
+    if (!m_activeStroke.has_value()) {
+        return;
     }
 
-    for (int i = x_left; i <= x_right; i++)
-    {
-        if (i < 0 || i >= m_width) continue;
-        for (int j = y_top; j <= y_bottom; j++)
-        {
-            if (j < 0 || j >= m_width) continue;
+    Stroke stroke = *m_activeStroke;
+    if (!stroke.points.empty()) {
+        commitStrokeAsRegion(stroke);
+    }
+    m_activeStroke.reset();
+}
 
-            float opacity = mask_data.at(posToIndex(i - x_left, j - y_top, mask_width));
-            RGBA canvasColor = m_data.at(posToIndex(i, j, m_width));
-            RGBA baseColor = pre_data.at(posToIndex(i - x_left, j - y_top, mask_width));
-            if (settings.brushType == BRUSH_SMUDGE)
-            {
-                m_data.at(posToIndex(i, j, m_width)) = colorBlendingSmudge(baseColor, canvasColor, opacity);
-            }
-            else if (settings.fixAlphaBlending == true)
-            {
-                float alpha_to_add = opacity * (1.0f - m_accumulatedAlpha.at(posToIndex(i, j, m_width)));
-                m_accumulatedAlpha.at(posToIndex(i, j, m_width)) += alpha_to_add;
-                m_data.at(posToIndex(i, j, m_width)) = colorBlending(settings.brushColor, baseColor, alpha_to_add);
-            }
-            else
-            {
-                m_data.at(posToIndex(i, j, m_width)) = colorBlending(settings.brushColor, canvasColor, opacity);
-            }
+bool Canvas2D::intersectsExistingStrokes(const Stroke &stroke) const {
+    for (const Stroke &existingStroke : m_strokes) {
+        if (strokesIntersect(stroke, existingStroke)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Stroke Canvas2D::makeClosingCurve(const Stroke &openStroke) const {
+    Stroke closing;
+    if (openStroke.points.size() < 2) {
+        return closing;
+    }
+
+    closing.points.push_back(openStroke.points.back());
+    closing.points.push_back(openStroke.points.front());
+    closing.isClosingCurve = true;
+    closing.depthOrder = openStroke.depthOrder;
+    return closing;
+}
+
+Region Canvas2D::makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const {
+    Region region;
+    region.depthOrder = openStroke.depthOrder;
+    region.boundaries.push_back(openStroke);
+    if (!closingCurve.points.empty()) {
+        region.boundaries.push_back(closingCurve);
+    }
+    return region;
+}
+
+int Canvas2D::computeDepthOrderForStroke(const Stroke &stroke) const {
+    int maxIntersectingDepth = -1;
+    for (const Stroke &existingStroke : m_strokes) {
+        if (strokesIntersect(stroke, existingStroke)) {
+            maxIntersectingDepth = std::max(maxIntersectingDepth, existingStroke.depthOrder);
         }
     }
 
-    if (settings.fixAlphaBlending == false) {
-        saveData(x, y);
+    return maxIntersectingDepth + 1;
+}
+
+void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
+    if (stroke.points.size() < 2) {
+        return;
     }
 
+    Stroke depthAssignedStroke = stroke;
+    depthAssignedStroke.depthOrder = computeDepthOrderForStroke(stroke);
+
+    Stroke closingCurve;
+    if (!depthAssignedStroke.isClosed()) {
+        closingCurve = makeClosingCurve(depthAssignedStroke);
+        closingCurve.isMergingBoundary = intersectsExistingStrokes(closingCurve);
+    }
+
+    Region region = makeRegionFromStroke(depthAssignedStroke, closingCurve);
+    m_strokes.push_back(depthAssignedStroke);
+    m_regions.push_back(region);
+    renderRegion(region);
+}
+
+QImage Canvas2D::makeImageFromCanvasData() const {
+    QImage image(m_width, m_height, QImage::Format_RGBX8888);
+    for (int i = 0; i < static_cast<int>(m_data.size()); ++i) {
+        image.setPixelColor(
+            i % m_width,
+            i / m_width,
+            QColor(m_data[i].r, m_data[i].g, m_data[i].b, m_data[i].a)
+        );
+    }
+    return image;
+}
+
+void Canvas2D::paintEvent(QPaintEvent *event) {
+    QLabel::paintEvent(event);
+
+    if (!m_activeStroke.has_value()) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    paintStrokePreview(painter, *m_activeStroke);
+}
+
+void Canvas2D::paintStrokePreview(QPainter &painter, const Stroke &stroke) const {
+    if (stroke.points.size() < 2) {
+        return;
+    }
+
+    QPainterPath path;
+    path.moveTo(toQPointF(stroke.points.front()));
+    for (std::size_t i = 1; i < stroke.points.size(); ++i) {
+        path.lineTo(toQPointF(stroke.points[i]));
+    }
+    painter.setPen(QPen(kOutlineColor, 2));
+    painter.drawPath(path);
+}
+
+void Canvas2D::loadCanvasDataFromImage(const QImage &image) {
+    QImage converted = image.convertToFormat(QImage::Format_RGBX8888);
+    m_data.clear();
+    m_data.reserve(converted.width() * converted.height());
+
+    QByteArray arr = QByteArray::fromRawData(
+        reinterpret_cast<const char *>(converted.bits()),
+        converted.sizeInBytes()
+    );
+
+    for (int i = 0; i < arr.size() / 4; ++i) {
+        m_data.push_back(RGBA{
+            static_cast<std::uint8_t>(arr[4 * i]),
+            static_cast<std::uint8_t>(arr[4 * i + 1]),
+            static_cast<std::uint8_t>(arr[4 * i + 2]),
+            static_cast<std::uint8_t>(arr[4 * i + 3])
+        });
+    }
+}
+
+void Canvas2D::renderRegion(const Region &region) {
+    if (region.boundaries.empty()) {
+        return;
+    }
+
+    const Stroke &openStroke = region.boundaries.front();
+    if (openStroke.points.size() < 2) {
+        return;
+    }
+
+    QImage image = makeImageFromCanvasData();
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath fillPath;
+    fillPath.moveTo(toQPointF(openStroke.points.front()));
+    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
+        fillPath.lineTo(toQPointF(openStroke.points[i]));
+    }
+    fillPath.closeSubpath();
+
+    painter.fillPath(fillPath, kFillColor);
+    painter.setPen(QPen(kOutlineColor, 2));
+    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
+        painter.drawLine(
+            toQPointF(openStroke.points[i - 1]),
+            toQPointF(openStroke.points[i])
+        );
+    }
+
+    painter.end();
+    loadCanvasDataFromImage(image);
     displayImage();
 }
 
-// Change the mask color distribution when settings are changed or in speed brush, everytime mouse is dragged
-void Canvas2D::changeMask() {
-    int mask_width = 2 * settings.brushRadius + 1;
-    mask_data.assign(mask_width * mask_width, 0);
-
-    for (int i = 0; i < mask_width; i++)
+void Canvas2D::mouseDown(const QPointF &point) {
+    if (isInsideCanvas(point, m_width, m_height))
     {
-        for (int j = 0; j < mask_width; j++)
-        {
-            float distance = std::sqrt((i - settings.brushRadius) * (i - settings.brushRadius) + (j - settings.brushRadius) * (j -settings.brushRadius));
-
-            if (settings.brushType == BRUSH_CONSTANT)
-            {
-                if (distance <= settings.brushRadius)
-                {
-                    mask_data.at(posToIndex(i, j, mask_width)) = 1;
-                }
-                else mask_data.at(posToIndex(i, j, mask_width)) = 0;
-            }
-            else if (settings.brushType == BRUSH_LINEAR || settings.brushType == BRUSH_SMUDGE)
-            {
-                if (distance <= settings.brushRadius)
-                {
-                    mask_data.at(posToIndex(i, j, mask_width)) = 1.0 - (float)(distance / settings.brushRadius);
-                }
-                else mask_data.at(posToIndex(i, j, mask_width)) = 0;
-            }
-            else if (settings.brushType == BRUSH_QUADRATIC)
-            {
-                if (distance <= settings.brushRadius)
-                {
-                    mask_data.at(posToIndex(i, j, mask_width)) = (distance * distance) / (float)(settings.brushRadius * settings.brushRadius) -
-                                                                 (2.0 * distance / (float)settings.brushRadius) + 1.0;
-                }
-                else mask_data.at(posToIndex(i, j, mask_width)) = 0;
-            }
-            else if (settings.brushType == BRUSH_SPEED)
-            {
-                if (distance <= m_speedRadius) // Only draw within the speed radius
-                {
-                    mask_data.at(posToIndex(i, j, mask_width)) = 1;
-                }
-                else mask_data.at(posToIndex(i, j, mask_width)) = 0;
-            }
-        }
-    }
-}
-
-/**
- * @brief These functions are called when the mouse is clicked and dragged on the canvas
- */
-void Canvas2D::mouseDown(int x, int y) {
-    // Brush TODO
-    if (x >= 0 && x < m_width && y >= 0 && y < m_height)
-    {
-        // Initialise speed
-        m_lastX = x;
-        m_lastY = y;
-        m_lastTime = std::chrono::steady_clock::now();
-
-        // Put accumulated alpha back to 0
-        m_accumulatedAlpha.assign(m_width * m_height, 0.0f);
-
-        saveData(x, y);
-        if (settings.brushType != BRUSH_SPRAY) drawMask(x, y);
-        else drawSprayPaint(x, y);
+        beginStroke(point);
         m_isDown = true;
+        update();
     }
 }
 
-void Canvas2D::mouseDragged(int x, int y) {
-    // Brush TODO
-    if (x >= 0 && x < m_width && y >= 0 && y < m_height && m_isDown)
+void Canvas2D::mouseDragged(const QPointF &point) {
+    if (isInsideCanvas(point, m_width, m_height) && m_isDown)
     {
-        // Calculate brush radius for brush speed
-        if (settings.brushType == BRUSH_SPEED) {
-            double speed = calculateMouseSpeed(x, y);
-            m_speedRadius = mapSpeedToRadius(speed);
-            changeMask();
-            // std::cout << x << ", " << y << " speed=" << speed << " radius=" << m_speedRadius << " " << settings.brushRadius << std::endl;
+        if (!m_activeStroke.has_value() || m_activeStroke->points.empty()) {
+            return;
         }
-
-        if (settings.brushType != BRUSH_SPRAY) drawMask(x, y);
-        else drawSprayPaint(x, y);
+        appendPointToActiveStroke(point);
+        update();
     }
 }
 
-void Canvas2D::mouseUp(int x, int y) {
-    // Brush TODO
+void Canvas2D::mouseUp(const QPointF &point) {
+    if (m_isDown && isInsideCanvas(point, m_width, m_height)) {
+        appendPointToActiveStroke(point);
+    }
+
     m_isDown = false;
-    saveData(x, y);
+    finishStroke();
+    update();
 }
-
-
-RGBA Canvas2D::colorBlendingSmudge(RGBA brush, RGBA canvas, float opacity) {
-    RGBA res;
-    res = brush * opacity + canvas * (1 - opacity);
-    res.a = brush.a;
-    return res;
-}
-
-
-// mixing colors
-RGBA Canvas2D::colorBlending(RGBA brush, RGBA canvas, float opacity) {
-    RGBA res;
-    float a = float(brush.a / 255.0);
-    res = brush * (opacity * a) + canvas * (1 - opacity * a) + 0.5f;
-    res.a = brush.a;
-    // std::cout << a << " " << opacity<< std::endl;
-    // std::cout << (int)res.r << " " << (int)res.g << " " << (int)res.b << std::endl;
-    // std::cout << (int)brush.r << " " << (int)brush.g << " " << (int)brush.b << std::endl;
-    // std::cout << (int)canvas.r << " " << (int)canvas.g << " " << (int)canvas.b << std::endl;
-    return res;
-}
-
-
-// =============================== Spray Paint Brush ===============================
-
-// Initialize the random number generator
-void Canvas2D::initSrand() {
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
-    spray();
-}
-
-void Canvas2D::spray() {
-    points.clear();
-
-    int density = 0;
-    double pi = M_PI;
-
-    if (settings.brushDensity == 100)
-    {
-        density = (int) ((double)settings.brushDensity / 100 * (settings.brushRadius * settings.brushRadius * pi)) * 100;
-    }
-    else
-    {
-        density = (int) ((double)settings.brushDensity / 100 * (settings.brushRadius * settings.brushRadius * pi));
-    }
-
-    for (int i = 0; i < density; ++i) {
-        int x = rand() % (2 * settings.brushRadius) - settings.brushRadius; // Randomly generate x coordinates
-        int y = rand() % (2 * settings.brushRadius) - settings.brushRadius; // Randomly generate y coordinates
-
-        // Check if the point is within the circle
-        if (x * x + y * y <= settings.brushRadius * settings.brushRadius) {
-            points.push_back(std::make_pair(x, y));
-        }
-    }
-}
-
-void Canvas2D::drawSprayPaint(int x, int y) {
-    spray();
-
-    for (int i = 0; i < points.size(); i++)
-    {
-        if (x + points[i].first < 0 || x + points[i].first >= m_width
-            || y + points[i].second < 0 || y + points[i].second >= m_width) continue;
-        m_data.at(posToIndex(x + points[i].first, y + points[i].second, m_width)) = settings.brushColor;
-    }
-
-    saveData(x, y);
-
-    displayImage();
-}
-
-
-// =============================== Speed Brush ===============================
-
-double Canvas2D::calculateMouseSpeed(int x, int y) {
-    using namespace std::chrono;
-
-    auto now = steady_clock::now();
-
-    if (m_lastX >= 0 && m_lastY >= 0) {
-        double dx = x - m_lastX;
-        double dy = y - m_lastY;
-        double distance = std::sqrt(dx * dx + dy * dy);
-
-        auto dt = duration_cast<milliseconds>(now - m_lastTime).count();
-        if (dt > 0) {
-            m_mouseSpeed = distance / dt; // pixel per ms
-        }
-    }
-
-    m_lastX = x;
-    m_lastY = y;
-    m_lastTime = now;
-
-    return m_mouseSpeed;
-}
-
-int Canvas2D::mapSpeedToRadius(double speed) {
-    // speed: pixel / ms
-    const int baseRadius = 1;
-    const int maxRadius = settings.brushRadius;
-
-    // Avoid speed = 0
-    double adjustedSpeed = std::max(speed, 0.1);
-
-    // inverse relationship: radius = maxRadius / (1 + k * speed)
-    double k = 0.5;  // Control sensitivity
-    double radius = static_cast<double>(maxRadius) / (1.0 + k * adjustedSpeed);
-
-    if (radius < baseRadius) radius = baseRadius;
-    return (int)(radius);
-}
-
