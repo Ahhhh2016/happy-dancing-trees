@@ -38,12 +38,12 @@ struct Region {
     int depthOrder = 0;
 };
 
-struct MeshPart { // internal to monster.cpp
-    Eigen::MatrixXd V;   // vertices
-    Eigen::MatrixXi F;   // triangles
-    int side;            // +1 front, -1 back
-    int depthOrder;
+struct MeshPart {
+    Eigen::MatrixXd V;        // stitched front+back vertices
+    Eigen::MatrixXi F;        // stitched front+back faces
+    Eigen::VectorXi sideFlags;
     std::vector<bool> isDirichlet;
+    int depthOrder;
 };
 
 struct StitchedMesh {
@@ -59,6 +59,7 @@ public:
     Region makeTestBody();
     Region makeTestLeg();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
+    void stitchRegions(StitchedMesh& mesh);
     std::vector<MeshPart> m_meshParts;
 };
 
