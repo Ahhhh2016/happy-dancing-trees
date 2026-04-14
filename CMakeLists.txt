@@ -32,6 +32,7 @@ add_executable(${PROJECT_NAME}
   mainwindow.h
   settings.h
   canvas2d.h
+  triangle.h
   rgba.h
   monster.h monster.cpp
   triangle.c
