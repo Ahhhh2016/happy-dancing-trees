@@ -2,6 +2,7 @@
 /build/
 /CMakeFiles/
 /CMakeCache.txt
+/CMakeCache.txt.user
 /cmake_install.cmake
 /Testing/
 /*.ninja
