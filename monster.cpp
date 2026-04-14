@@ -54,6 +54,11 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
     for (const Region& region : regions) {
         std::cout << "Region " << region.depthOrder << ":" << std::endl;
+
+        // TODO: separate regions into hosts and attachments using isMergingBoundary
+        // then triangulate host first, insert Bp as constrained edges,
+        // split host along Bp, and connect attachment through the hole (Fig. 4)
+
         for (const Stroke& stroke : region.boundaries) {
             std::cout << "  isClosingCurve: " << stroke.isClosingCurve
                       << " isMergingBoundary: " << stroke.isMergingBoundary
@@ -67,7 +72,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     // For each region, collect all boundary points from its strokes - skip the last point
     // of each stroke to avoid duplicates
     for (const Region& region : regions) {
-        // get all boundary points from Region
+        // Step 1: Collect boundary points from all strokes in this region,
+        // skipping the last point of each stroke to avoid duplicates
         std::vector<Eigen::Vector2f> boundaryPoints;
         for (const Stroke& stroke : region.boundaries) {
             int m = stroke.points.size();
@@ -76,8 +82,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
             }
         }
 
-        // Build V (vertex matrix Nx2) and E (edge matric Nx2) from the boundary points. E
-        // connected each point to the next, closing the loop at the end.
+        // Step 2: Build V (Nx2 vertex matrix) and E (Nx2 edge matrix).
+        // E connects each boundary point to the next, closing the loop at the end.
         int n = boundaryPoints.size();
         Eigen::MatrixXd V(n, 2);
         for (int i = 0; i < n; i++) {
@@ -118,10 +124,10 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
             }
         }
 
-        // Run constrained Delauney triangulation (CDT).
-        // V2 = output vertices (boundary + new interior vertices).
+        // Step 3: Run constrained Delaunay triangulation (CDT).
+        // V2 = output vertices (original boundary points + new interior points)
         // F2 = output triangles
-        // H = holes (empty for now)
+        // "pQa500" = planar, quiet, max triangle area 500px²
 
         igl::triangle::triangulate(V, E, H, "pQa500", V2, F2);
 
@@ -131,9 +137,9 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
         std::cout << "Last E: " << E(E.rows()-1, 0) << ", " << E(E.rows()-1, 1) << std::endl;
 
-        // Mark Dirichlet vertices - the first V.rows() vertices in V2 are the original
-        // boundary points (Dp in the paper).
-        // These get h=0 in the Poisson solve (step 3).
+        // Step 4: Mark Dirichlet vertices.
+        // The first V.rows() vertices in V2 are the original boundary points (Dp).
+        // Step 3 (Poisson solve) pins these to h=0 — they form the seam of the shell.
         std::vector<bool> isDirichlet(V2.rows(), false);
         for (int i = 0; i < V.rows(); i++) {  // V.rows() = original boundary points
             isDirichlet[i] = true;
@@ -142,15 +148,14 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         int dirichletCount = std::count(isDirichlet.begin(), isDirichlet.end(), true);
         std::cout << "Dirichlet vertices: " << dirichletCount << std::endl;
 
-        // Duplicated into front (s = +1) and back (s = -1) copies.
-        // Back copy has reversed triangle winding so normals point outward.
-        // This given each region a closed shell like a coin.
-
-
-
-        // Global vertex list
+        // Step 5: Duplicate into front (s = +1) and back (s = -1) copies.
+        // Front inflates toward viewer, back inflates away.
+        // All vertices are duplicated — Dirichlet ones will both be pinned to z=0
+        // by the Poisson solve, effectively connecting the front and back at the seam.
         Eigen::MatrixXd V_global(V2.rows() * 2, 2);
         Eigen::VectorXi sideFlags(V2.rows() * 2);
+        // front vertices: indices 0..V2.rows()-1, sideFlags = +1
+        // back vertices:  indices V2.rows()..end, sideFlags = -1
 
         // Add front vertices
         for (int i = 0; i < V2.rows(); i++) {
@@ -165,19 +170,11 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         // For each vertex in the back copy...
         std::vector<int> backIndexMap(V2.rows());
         for (int i = 0; i < V2.rows(); i++) {
-            if (isDirichlet[i]) {
-                // Boundary vertex (on Dp) - share the front's index
-                // same position in 3D, this is the seam of the shell
-                backIndexMap[i] = i;  // share front vertex
-            } else {
-                // Interior vertex - give it a new index in the global list
-                // this vertex will get a different z after inflation
-                backIndexMap[i] = backOffset;
-                V_global(backOffset, 0) = V2(i, 0);
-                V_global(backOffset, 1) = V2(i, 1);
-                sideFlags(backOffset) = -1;
-                backOffset++;
-            }
+            backIndexMap[i] = backOffset;
+            V_global(backOffset, 0) = V2(i, 0);
+            V_global(backOffset, 1) = V2(i, 1);
+            sideFlags(backOffset) = -1;
+            backOffset++;
         }
         // Trim V_global and sideFlags to actual size
         // (we pre-allocated for worst case of no sharing)
@@ -186,7 +183,9 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
         std::cout << "Global vertices: " << V_global.rows() << std::endl;
 
-        // Remap back faces to global indices
+        // Step 6: Remap back face indices and combine front + back into F_global.
+        // Back faces have reversed winding so normals point outward.
+        // Remove degenerate faces (same vertex appearing twice in one triangle).
         Eigen::MatrixXi F2_reversed = F2.rowwise().reverse();
         Eigen::MatrixXi F_back_remapped(F2_reversed.rows(), 3);
         for (int i = 0; i < F2_reversed.rows(); i++) {
@@ -222,13 +221,26 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
             part.isDirichlet[i] = i < V.rows();
         }
         part.depthOrder = region.depthOrder;
+
+        // Store as one MeshPart per region
         m_meshParts.push_back(part);
 
 
     }
 
-    std::cout << "Total mesh parts: " << m_meshParts.size() << std::endl;
+    // Step 7: Concatenate all MeshParts into one global StitchedMesh
+    // with consistent vertex indices, side flags, and Dirichlet markers.
+    // TODO: inter-region stitching along Bp (connect body and limb meshes)
+    StitchedMesh result = stitchParts();
 
+    Eigen::MatrixXd V3D(result.V.rows(), 3);
+    V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
+    igl::writeOBJ("mesh11.obj", V3D, result.F);
+
+    return result;
+}
+
+StitchedMesh monster::stitchParts() {
     StitchedMesh result;
     int vOffset = 0;
     for (auto& part : m_meshParts) {
@@ -247,14 +259,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
         vOffset += part.V.rows();
     }
-
     std::cout << "Final mesh: " << result.V.rows() << " vertices, "
               << result.F.rows() << " faces" << std::endl;
-
-    Eigen::MatrixXd V3D(result.V.rows(), 3);
-    V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
-    igl::writeOBJ("mesh4.obj", V3D, result.F);
-
     return result;
 }
 

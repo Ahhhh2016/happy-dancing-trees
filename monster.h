@@ -59,6 +59,7 @@ public:
     Region makeTestBody();
     Region makeTestLeg();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
+    StitchedMesh stitchParts();
     void stitchRegions(StitchedMesh& mesh);
     std::vector<MeshPart> m_meshParts;
 };
