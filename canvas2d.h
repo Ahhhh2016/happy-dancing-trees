@@ -35,6 +35,7 @@ public:
     std::vector<RGBA> &getCanvasData() {return m_data;}
     const std::vector<Stroke> &getStrokes() const { return m_strokes; }
     const std::optional<Stroke> &getActiveStroke() const { return m_activeStroke; }
+    const std::vector<Region> &getRegions() const { return m_regions; }
 
 private:
     std::vector<RGBA> m_data;

@@ -3,6 +3,10 @@
 
 #include <Eigen/Core>
 #include <vector>
+#include <igl/delaunay_triangulation.h>
+#define ANSI_DECLARATORS
+#define TRILIBRARY
+#include <igl/triangle/triangulate.h>
 
 struct Stroke {
     std::vector<Eigen::Vector2f> points;
@@ -33,11 +37,28 @@ struct Region {
     int depthOrder = 0;
 };
 
+struct MeshPart {
+    Eigen::MatrixXd V;   // vertices
+    Eigen::MatrixXi F;   // triangles
+    int side;            // +1 front, -1 back
+    int depthOrder;
+    std::vector<bool> isDirichlet;
+};
+
+struct StitchedMesh {
+    Eigen::MatrixXd V;
+    Eigen::MatrixXi F;
+    Eigen::VectorXi sideFlags;
+    std::vector<bool> dirichlet;
+};
+
 class monster {
 public:
     monster();
-    // Stroke makeDummyBody();
-    // Stroke makeDummyLeg();
+    Region makeTestBody();
+    Region makeTestLeg();
+    StitchedMesh buildMesh(const std::vector<Region>& regions);
+    std::vector<MeshPart> m_meshParts;
 };
 
 

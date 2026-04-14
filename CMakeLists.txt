@@ -34,19 +34,37 @@ add_executable(${PROJECT_NAME}
   canvas2d.h
   rgba.h
   monster.h monster.cpp
+  triangle.c
 )
 
+set_source_files_properties(triangle.c PROPERTIES
+    LANGUAGE C
+    COMPILE_FLAGS "-DTRILIBRARY -DANSI_DECLARATORS -DREAL=double -DVOID=int")
+
 # Specifies libraries to be linked (Qt components, glew, etc)
+
+include(FetchContent)
+FetchContent_Declare(
+    libigl
+    GIT_REPOSITORY https://github.com/libigl/libigl.git
+    GIT_TAG main
+)
+
+FetchContent_MakeAvailable(libigl)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   Qt::Core
   Qt::Widgets
   Qt::Gui
+  igl::core
+  # CDT::CDT
 )
 
 # This allows you to `#include "Eigen/..."`
 target_include_directories(${PROJECT_NAME} PRIVATE
     Eigen
+    ${libigl_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}
 )
 
 # Set this flag to silence warnings on Windows
@@ -58,3 +76,4 @@ endif()
 if (APPLE)
   set(CMAKE_CXX_FLAGS "-Wno-deprecated-volatile")
 endif()
+

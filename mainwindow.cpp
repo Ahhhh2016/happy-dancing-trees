@@ -47,6 +47,10 @@ MainWindow::MainWindow()
     addPushButton(brushLayout, "Revert Image", &MainWindow::onRevertButtonClick);
     addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
     addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
+    addPushButton(brushLayout, "Build Mesh", &MainWindow::onBuildMeshButtonClick);
+
+    monster m;
+    std::vector<Region> regions = m_canvas->getRegions();
 }
 
 void MainWindow::setupCanvas2D() {
@@ -88,4 +92,11 @@ void MainWindow::onSaveButtonClick() {
     if (file.isEmpty()) { return; }
 
     m_canvas->saveImageToFile(file);
+}
+
+void MainWindow::onBuildMeshButtonClick() {
+    monster m;
+    std::vector<Region> regions = m_canvas->getRegions();
+    StitchedMesh mesh = m.buildMesh(m_canvas->getRegions());
+
 }

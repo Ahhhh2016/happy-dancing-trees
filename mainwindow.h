@@ -29,5 +29,6 @@ private slots:
     void onRevertButtonClick();
     void onUploadButtonClick();
     void onSaveButtonClick();
+    void onBuildMeshButtonClick();
 };
 #endif // MAINWINDOW_H
