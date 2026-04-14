@@ -83,6 +83,20 @@ bool strokesIntersect(const Stroke &first, const Stroke &second) {
     }
     return false;
 }
+
+QPainterPath makeClosedFillPath(const Stroke &stroke) {
+    QPainterPath fillPath;
+    if (stroke.points.size() < 2) {
+        return fillPath;
+    }
+
+    fillPath.moveTo(toQPointF(stroke.points.front()));
+    for (std::size_t i = 1; i < stroke.points.size(); ++i) {
+        fillPath.lineTo(toQPointF(stroke.points[i]));
+    }
+    fillPath.closeSubpath();
+    return fillPath;
+}
 }
 
 void Canvas2D::init() {
@@ -201,10 +215,32 @@ void Canvas2D::finishStroke() {
     m_activeStroke.reset();
 }
 
-bool Canvas2D::intersectsExistingStrokes(const Stroke &stroke) const {
-    for (const Stroke &existingStroke : m_strokes) {
-        if (strokesIntersect(stroke, existingStroke)) {
+bool Canvas2D::overlapsExistingRegions(const Region &region) const {
+    if (region.boundaries.empty()) {
+        return false;
+    }
+
+    const QPainterPath currentFillPath = makeClosedFillPath(region.boundaries.front());
+    if (currentFillPath.isEmpty()) {
+        return false;
+    }
+
+    for (const Region &existingRegion : m_regions) {
+        if (existingRegion.boundaries.empty()) {
+            continue;
+        }
+
+        const QPainterPath existingFillPath = makeClosedFillPath(existingRegion.boundaries.front());
+        if (!currentFillPath.intersected(existingFillPath).isEmpty()) {
             return true;
+        }
+
+        for (const Stroke &currentBoundary : region.boundaries) {
+            for (const Stroke &existingBoundary : existingRegion.boundaries) {
+                if (strokesIntersect(currentBoundary, existingBoundary)) {
+                    return true;
+                }
+            }
         }
     }
     return false;
@@ -250,15 +286,22 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     }
 
     Stroke depthAssignedStroke = stroke;
+    depthAssignedStroke.isMergingBoundary = false;
     depthAssignedStroke.depthOrder = computeDepthOrderForStroke(stroke);
 
     Stroke closingCurve;
     if (!depthAssignedStroke.isClosed()) {
         closingCurve = makeClosingCurve(depthAssignedStroke);
-        closingCurve.isMergingBoundary = intersectsExistingStrokes(closingCurve);
     }
 
     Region region = makeRegionFromStroke(depthAssignedStroke, closingCurve);
+    if (!closingCurve.points.empty() &&
+        closingCurve.isClosingCurve &&
+        overlapsExistingRegions(region)) {
+        closingCurve.isMergingBoundary = true;
+        region.boundaries.back().isMergingBoundary = true;
+    }
+
     m_strokes.push_back(depthAssignedStroke);
     m_regions.push_back(region);
     renderRegion(region);
@@ -336,12 +379,7 @@ void Canvas2D::renderRegion(const Region &region) {
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    QPainterPath fillPath;
-    fillPath.moveTo(toQPointF(openStroke.points.front()));
-    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
-        fillPath.lineTo(toQPointF(openStroke.points[i]));
-    }
-    fillPath.closeSubpath();
+    QPainterPath fillPath = makeClosedFillPath(openStroke);
 
     painter.fillPath(fillPath, kFillColor);
     painter.setPen(QPen(kOutlineColor, 2));

@@ -39,8 +39,8 @@ public:
 
 private:
     std::vector<RGBA> m_data;
-    std::vector<Stroke> m_strokes;
-    std::vector<Region> m_regions;
+    std::vector<Stroke> m_strokes; // Only contains user drawn Dp
+    std::vector<Region> m_regions; // Contains all the regions, and in boundaries containing closing curves
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
 
     void mouseDown(const QPointF &point);
@@ -67,7 +67,7 @@ private:
     void beginStroke(const QPointF &point);
     void appendPointToActiveStroke(const QPointF &point);
     void finishStroke();
-    bool intersectsExistingStrokes(const Stroke &stroke) const;
+    bool overlapsExistingRegions(const Region &region) const;
     Stroke makeClosingCurve(const Stroke &openStroke) const;
     Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
     int computeDepthOrderForStroke(const Stroke &stroke) const;
