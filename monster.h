@@ -43,6 +43,8 @@ struct MeshPart {
     Eigen::MatrixXi F;        // stitched front+back faces
     Eigen::VectorXi sideFlags;
     std::vector<bool> isDirichlet;
+    std::vector<bool> isMerging;
+    std::vector<int> globalIndexMap;  // maps local -> global index
     int depthOrder;
 };
 
@@ -59,8 +61,14 @@ public:
     Region makeTestBody();
     Region makeTestLeg();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
-    void stitchRegions(StitchedMesh& mesh);
     std::vector<MeshPart> m_meshParts;
+    void triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
+                           Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                           const std::vector<Eigen::Vector2f>& extraPoints = {});
+    MeshPart stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2, int n, int depthOrder);
+    StitchedMesh stitchParts();
+    std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
+    void stitchToHost(MeshPart& host, MeshPart& attachment);
 };
 
 

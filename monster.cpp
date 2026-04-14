@@ -61,252 +61,285 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         }
     }
 
-    // handle hosts and attachments somehow?
+    std::vector<Region> hostRegions;
+    std::vector<Region> attachmentRegions;
 
-
-    // For each region, collect all boundary points from its strokes - skip the last point
-    // of each stroke to avoid duplicates
     for (const Region& region : regions) {
-        // get all boundary points from Region
-        std::vector<Eigen::Vector2f> boundaryPoints;
+        bool hasMergingBoundary = false;
         for (const Stroke& stroke : region.boundaries) {
-            int m = stroke.points.size();
-            for (int i = 0; i < m - 1; i++) {
-                boundaryPoints.push_back(stroke.points[i]);
+            if (stroke.isMergingBoundary) {
+                hasMergingBoundary = true;
+                break;
             }
         }
-
-        // Build V (vertex matrix Nx2) and E (edge matric Nx2) from the boundary points. E
-        // connected each point to the next, closing the loop at the end.
-        int n = boundaryPoints.size();
-        Eigen::MatrixXd V(n, 2);
-        for (int i = 0; i < n; i++) {
-            V(i, 0) = boundaryPoints[i].x();
-            V(i, 1) = boundaryPoints[i].y();
+        if (hasMergingBoundary) {
+            attachmentRegions.push_back(region);
+        } else {
+            hostRegions.push_back(region);
         }
+    }
 
-        std::vector<Eigen::Vector2i> edges;
-        for (int i = 0; i < n - 1; i++) {
-            edges.push_back({i, i + 1});
-        }
-        edges.push_back({n - 1, 0});  // close
+    std::cout << "Host regions: " << hostRegions.size() << std::endl;
+    std::cout << "Attachment regions: " << attachmentRegions.size() << std::endl;
 
-        std::cout << "edges.size(): " << edges.size() << std::endl;
+    // Get Bp points from attachment regions
+    std::vector<Eigen::Vector2f> bpPoints;
+    for (const Region& region : attachmentRegions) {
+        auto pts = getMergingBoundaryPoints(region);
+        bpPoints.insert(bpPoints.end(), pts.begin(), pts.end());
+    }
 
-        Eigen::MatrixXi E(edges.size(), 2);
-        for (int i = 0; i < edges.size(); i++) {
-            E(i, 0) = edges[i].x();
-            E(i, 1) = edges[i].y();
-        }
-
-        // output
+    // Step 1: Triangulate host regions with Bp points inserted
+    for (const Region& region : hostRegions) {
+        Eigen::MatrixXd V;
         Eigen::MatrixXd V2;
         Eigen::MatrixXi F2;
-        Eigen::MatrixXd H(0, 2); // H is holes and we start with no holes
+        int n;
+        triangulateRegion(region, V, n, V2, F2, bpPoints);
+        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder));
+    }
 
-        std::cout << "V rows: " << V.rows() << std::endl;
-        std::cout << "E rows: " << E.rows() << std::endl;
-        std::cout << "First V: " << V(0,0) << ", " << V(0,1) << std::endl;
-        std::cout << "First E: " << E(0,0) << ", " << E(0,1) << std::endl;
-
-        for (int i = 0; i < n; i++) {
-            for (int j = i + 1; j < n; j++) {
-                if (V(i,0) == V(j,0) && V(i,1) == V(j,1)) {
-                    std::cout << "Duplicate at " << i << " and " << j << ": "
-                              << V(i,0) << ", " << V(i,1) << std::endl;
+    // Step 2: Triangulate attachment regions and stitch to host along Bp
+    for (const Region& region : attachmentRegions) {
+        Eigen::MatrixXd V;
+        Eigen::MatrixXd V2;
+        Eigen::MatrixXi F2;
+        int n;
+        triangulateRegion(region, V, n, V2, F2);
+        // Identify which V2 vertices are on the merging boundary Bp
+        std::vector<Eigen::Vector2f> bpPoints = getMergingBoundaryPoints(region);
+        std::vector<bool> isMerging(V2.rows(), false);
+        for (int i = 0; i < n; i++) {  // only check original boundary vertices
+            for (const Eigen::Vector2f& bp : bpPoints) {
+                double dx = V2(i,0) - bp.x();
+                double dy = V2(i,1) - bp.y();
+                if (dx*dx + dy*dy < 1.0) {
+                    isMerging[i] = true;
+                    break;
                 }
             }
         }
 
-        // Run constrained Delauney triangulation (CDT).
-        // V2 = output vertices (boundary + new interior vertices).
-        // F2 = output triangles
-        // H = holes (empty for now)
+        MeshPart part = stitchFrontBack(V2, F2, n, region.depthOrder);
 
-        igl::triangle::triangulate(V, E, H, "pQa500", V2, F2);
-
-        std::cout << "Region " << region.depthOrder << ": "
-                  << V2.rows() << " vertices, "
-                  << F2.rows() << " triangles" << std::endl;
-
-        std::cout << "Last E: " << E(E.rows()-1, 0) << ", " << E(E.rows()-1, 1) << std::endl;
-
-        // Mark Dirichlet vertices - the first V.rows() vertices in V2 are the original
-        // boundary points (Dp in the paper).
-        // These get h=0 in the Poisson solve (step 3).
-        std::vector<bool> isDirichlet(V2.rows(), false);
-        for (int i = 0; i < V.rows(); i++) {  // V.rows() = original boundary points
-            isDirichlet[i] = true;
-        }
-
-        int dirichletCount = std::count(isDirichlet.begin(), isDirichlet.end(), true);
-        std::cout << "Dirichlet vertices: " << dirichletCount << std::endl;
-
-        // Duplicated into front (s = +1) and back (s = -1) copies.
-        // Back copy has reversed triangle winding so normals point outward.
-        // This given each region a closed shell like a coin.
-
-
-
-        // Global vertex list
-        Eigen::MatrixXd V_global(V2.rows() * 2, 2);
-        Eigen::VectorXi sideFlags(V2.rows() * 2);
-
-        // Add front vertices
+        // Resize isMerging to match doubled vertex count (front + back)
+        isMerging.resize(part.V.rows(), false);
+        // Back vertices that correspond to merging front vertices are also merging
         for (int i = 0; i < V2.rows(); i++) {
-            V_global(i, 0) = V2(i, 0);
-            V_global(i, 1) = V2(i, 1);
-            sideFlags(i) = 1;
-        }
-
-        // Start adding back vertices after all front vertices
-        int backOffset = V2.rows();
-
-        // For each vertex in the back copy...
-        std::vector<int> backIndexMap(V2.rows());
-        for (int i = 0; i < V2.rows(); i++) {
-            if (isDirichlet[i]) {
-                // Boundary vertex (on Dp) - share the front's index
-                // same position in 3D, this is the seam of the shell
-                backIndexMap[i] = i;  // share front vertex
-            } else {
-                // Interior vertex - give it a new index in the global list
-                // this vertex will get a different z after inflation
-                backIndexMap[i] = backOffset;
-                V_global(backOffset, 0) = V2(i, 0);
-                V_global(backOffset, 1) = V2(i, 1);
-                sideFlags(backOffset) = -1;
-                backOffset++;
-            }
-        }
-        // Trim V_global and sideFlags to actual size
-        // (we pre-allocated for worst case of no sharing)
-        V_global.conservativeResize(backOffset, 2);
-        sideFlags.conservativeResize(backOffset);
-
-        std::cout << "Global vertices: " << V_global.rows() << std::endl;
-
-        // Remap back faces to global indices
-        Eigen::MatrixXi F2_reversed = F2.rowwise().reverse();
-        Eigen::MatrixXi F_back_remapped(F2_reversed.rows(), 3);
-        for (int i = 0; i < F2_reversed.rows(); i++) {
-            for (int j = 0; j < 3; j++) {
-                F_back_remapped(i, j) = backIndexMap[F2_reversed(i, j)];
+            if (isMerging[i]) {
+                isMerging[V2.rows() + i] = true;  // mark corresponding back vertex too
             }
         }
 
-        // Combine front and back faces
-        Eigen::MatrixXi F_global(F2.rows() + F2_reversed.rows(), 3);
-        F_global << F2, F_back_remapped;
-
-        std::cout << "Global faces: " << F_global.rows() << std::endl;
-
-        // Remove degenerate faces (where two or more vertices have the same index)
-        Eigen::MatrixXi F_clean(F_global.rows(), 3);
-        int validFaces = 0;
-        for (int i = 0; i < F_global.rows(); i++) {
-            int a = F_global(i,0), b = F_global(i,1), c = F_global(i,2);
-            if (a != b && b != c && a != c) {
-                F_clean.row(validFaces++) = F_global.row(i);
-            }
-        }
-        F_clean.conservativeResize(validFaces, 3);
-        F_global = F_clean;
-
-        MeshPart part;
-        part.V = V_global;
-        part.F = F_global;
-        part.sideFlags = sideFlags;
-        part.isDirichlet = std::vector<bool>(V_global.rows(), false);
-        for (int i = 0; i < V_global.rows(); i++) {
-            part.isDirichlet[i] = i < V.rows();
-        }
-        part.depthOrder = region.depthOrder;
+        part.isMerging = isMerging;
         m_meshParts.push_back(part);
 
-
+        stitchToHost(m_meshParts[0], m_meshParts[1]);
     }
 
     std::cout << "Total mesh parts: " << m_meshParts.size() << std::endl;
 
+    // Step 3: Concatenate all mesh parts into one global StitchedMesh
+    // with included vertex indices, side flags, and Dirichlet markers
+    StitchedMesh result = stitchParts();
+
+    Eigen::MatrixXd V3D(result.V.rows(), 3);
+    V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
+    igl::writeOBJ("mesh9.obj", V3D, result.F);
+
+    return result;
+}
+
+void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
+                                Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                                const std::vector<Eigen::Vector2f>& extraPoints) {
+    std::vector<Eigen::Vector2f> boundaryPoints;
+    for (const Stroke& stroke : region.boundaries) {
+        int m = stroke.points.size();
+        for (int i = 0; i < m - 1; i++) {
+            boundaryPoints.push_back(stroke.points[i]);
+        }
+    }
+
+    // Add extra points (e.g. Bp endpoints) to the boundary
+    for (const Eigen::Vector2f& p : extraPoints) {
+        boundaryPoints.push_back(p);
+    }
+
+    n = boundaryPoints.size();
+    V.resize(n, 2);
+    for (int i = 0; i < n; i++) {
+        V(i, 0) = boundaryPoints[i].x();
+        V(i, 1) = boundaryPoints[i].y();
+    }
+
+    std::vector<Eigen::Vector2i> edges;
+    for (int i = 0; i < n - 1; i++) {
+        edges.push_back({i, i + 1});
+    }
+    edges.push_back({n - 1, 0});
+
+    Eigen::MatrixXi E(edges.size(), 2);
+    for (int i = 0; i < edges.size(); i++) {
+        E(i, 0) = edges[i].x();
+        E(i, 1) = edges[i].y();
+    }
+
+    Eigen::MatrixXd H(0, 2);
+    igl::triangle::triangulate(V, E, H, "pQa500", V2, F2);
+}
+
+
+MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2, int n, int depthOrder) {
+    std::vector<bool> isDirichlet(V2.rows(), false);
+    for (int i = 0; i < n; i++) {
+        isDirichlet[i] = true;
+    }
+
+    Eigen::MatrixXd V_global(V2.rows() * 2, 2);
+    Eigen::VectorXi sideFlags(V2.rows() * 2);
+
+    for (int i = 0; i < V2.rows(); i++) {
+        V_global(i, 0) = V2(i, 0);
+        V_global(i, 1) = V2(i, 1);
+        sideFlags(i) = 1;
+    }
+
+    int backOffset = V2.rows();
+    std::vector<int> backIndexMap(V2.rows());
+    for (int i = 0; i < V2.rows(); i++) {
+        backIndexMap[i] = backOffset;
+        V_global(backOffset, 0) = V2(i, 0);
+        V_global(backOffset, 1) = V2(i, 1);
+        sideFlags(backOffset) = -1;
+        backOffset++;
+    }
+    V_global.conservativeResize(backOffset, 2);
+    sideFlags.conservativeResize(backOffset);
+
+    Eigen::MatrixXi F2_reversed = F2.rowwise().reverse();
+    Eigen::MatrixXi F_back_remapped(F2_reversed.rows(), 3);
+    for (int i = 0; i < F2_reversed.rows(); i++) {
+        for (int j = 0; j < 3; j++) {
+            F_back_remapped(i, j) = backIndexMap[F2_reversed(i, j)];
+        }
+    }
+
+    Eigen::MatrixXi F_global(F2.rows() + F2_reversed.rows(), 3);
+    F_global << F2, F_back_remapped;
+
+    // Remove degenerate faces
+    Eigen::MatrixXi F_clean(F_global.rows(), 3);
+    int validFaces = 0;
+    for (int i = 0; i < F_global.rows(); i++) {
+        int a = F_global(i,0), b = F_global(i,1), c = F_global(i,2);
+        if (a != b && b != c && a != c) {
+            F_clean.row(validFaces++) = F_global.row(i);
+        }
+    }
+    F_clean.conservativeResize(validFaces, 3);
+    F_global = F_clean;
+
+    MeshPart part;
+    part.V = V_global;
+    part.F = F_global;
+    part.sideFlags = sideFlags;
+    part.isDirichlet = std::vector<bool>(V_global.rows(), false);
+    for (int i = 0; i < V_global.rows(); i++) {
+        part.isDirichlet[i] = i < n;
+    }
+    part.depthOrder = depthOrder;
+    return part;
+}
+
+StitchedMesh monster::stitchParts() {
     StitchedMesh result;
     int vOffset = 0;
+
+    // First pass: assign global indices
+    vOffset = 0;
     for (auto& part : m_meshParts) {
+        if (part.globalIndexMap.empty()) {
+            part.globalIndexMap.resize(part.V.rows());
+            std::iota(part.globalIndexMap.begin(), part.globalIndexMap.end(), vOffset);
+        } else {
+            // Already has some entries from stitchToHost — add offset to non-merging
+            for (int i = 0; i < (int)part.globalIndexMap.size(); i++) {
+                if (part.globalIndexMap[i] >= 0) {
+                    part.globalIndexMap[i] += vOffset;
+                }
+            }
+        }
+        vOffset += part.V.rows();
+    }
+
+    // Resolve negative (host) indices for attachments
+    MeshPart& host = m_meshParts[0];
+    for (int p = 1; p < (int)m_meshParts.size(); p++) {
+        MeshPart& attachment = m_meshParts[p];
+        for (int i = 0; i < (int)attachment.globalIndexMap.size(); i++) {
+            if (attachment.globalIndexMap[i] < 0) {
+                int hostLocalIdx = -(attachment.globalIndexMap[i] + 1);
+                attachment.globalIndexMap[i] = host.globalIndexMap[hostLocalIdx];
+            }
+        }
+    }
+
+    // Second pass: build result using globalIndexMap
+    for (auto& part : m_meshParts) {
+        // Add vertices
+        int oldVRows = result.V.rows();
+        result.V.conservativeResize(oldVRows + part.V.rows(), 2);
+        result.V.bottomRows(part.V.rows()) = part.V;
+
         for (int i = 0; i < part.V.rows(); i++) {
             result.dirichlet.push_back(part.isDirichlet[i]);
             result.sideFlags.conservativeResize(result.sideFlags.size() + 1);
             result.sideFlags(result.sideFlags.size() - 1) = part.sideFlags(i);
         }
-        int oldVRows = result.V.rows();
-        result.V.conservativeResize(oldVRows + part.V.rows(), 2);
-        result.V.bottomRows(part.V.rows()) = part.V;
 
+        // Add faces using globalIndexMap
         int oldFRows = result.F.rows();
         result.F.conservativeResize(oldFRows + part.F.rows(), 3);
-        result.F.bottomRows(part.F.rows()) = part.F.array() + vOffset;
-
-        vOffset += part.V.rows();
-    }
-
-    std::cout << "Final mesh: " << result.V.rows() << " vertices, "
-              << result.F.rows() << " faces" << std::endl;
-
-    Eigen::MatrixXd V3D(result.V.rows(), 3);
-    V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
-    igl::writeOBJ("mesh4.obj", V3D, result.F);
-
-    return result;
-}
-
-void monster::stitchRegions(StitchedMesh& mesh) {
-    // Find vertices that are at the same position
-    // and merge them by updating face indices
-
-    int n = mesh.V.rows();
-    std::vector<int> indexMap(n);
-    std::iota(indexMap.begin(), indexMap.end(), 0); // identity map to start
-
-    // For each pair of vertices, if they're at the same position, merge them
-    for (int i = 0; i < n; i++) {
-        for (int j = i + 1; j < n; j++) {
-            double dx = mesh.V(i,0) - mesh.V(j,0);
-            double dy = mesh.V(i,1) - mesh.V(j,1);
-            if (dx*dx + dy*dy < 4.0) { // within 2 pixels
-                indexMap[j] = indexMap[i]; // j points to i
+        for (int i = 0; i < part.F.rows(); i++) {
+            for (int j = 0; j < 3; j++) {
+                result.F(oldFRows + i, j) = part.globalIndexMap[part.F(i,j)];
             }
         }
     }
 
-    int mergedCount = 0;
-    for (int i = 0; i < n; i++) {
-        if (indexMap[i] != i) mergedCount++;
-    }
-    std::cout << "Merged vertices: " << mergedCount << std::endl;
-
-    // Remap faces
-    for (int i = 0; i < mesh.F.rows(); i++) {
-        for (int j = 0; j < 3; j++) {
-            mesh.F(i,j) = indexMap[mesh.F(i,j)];
-        }
-    }
-
-    // Remove degenerate faces
-    Eigen::MatrixXi F_clean(mesh.F.rows(), 3);
-    int validFaces = 0;
-    for (int i = 0; i < mesh.F.rows(); i++) {
-        int a = mesh.F(i,0), b = mesh.F(i,1), c = mesh.F(i,2);
-        if (a != b && b != c && a != c) {
-            F_clean.row(validFaces++) = mesh.F.row(i);
-        }
-    }
-    F_clean.conservativeResize(validFaces, 3);
-    mesh.F = F_clean;
-    std::cout << "Valid faces: " << validFaces << std::endl;
-
-    std::cout << "Stitched regions" << std::endl;
+    return result;
 }
 
+// helper
+std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& region) {
+    for (const Stroke& stroke : region.boundaries) {
+        if (stroke.isMergingBoundary) {
+            return stroke.points;
+        }
+    }
+    return {};
+}
 
+void monster::stitchToHost(MeshPart& host, MeshPart& attachment) {
+    attachment.globalIndexMap.resize(attachment.V.rows());
+    std::iota(attachment.globalIndexMap.begin(), attachment.globalIndexMap.end(), 0);
 
+    for (int i = 0; i < attachment.V.rows(); i++) {
+        if (!attachment.isMerging[i]) continue;
 
-
+        double bestDist = std::numeric_limits<double>::max();
+        int bestIdx = -1;
+        for (int j = 0; j < host.V.rows(); j++) {
+            double dx = attachment.V(i,0) - host.V(j,0);
+            double dy = attachment.V(i,1) - host.V(j,1);
+            double dist = dx*dx + dy*dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = j;
+            }
+        }
+        // Store host local index — stitchParts will resolve to global
+        attachment.globalIndexMap[i] = -(bestIdx + 1);  // negative = host index
+    }
+}
