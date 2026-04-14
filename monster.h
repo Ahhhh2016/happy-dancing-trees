@@ -37,7 +37,7 @@ struct Region {
     int depthOrder = 0;
 };
 
-struct MeshPart {
+struct MeshPart { // internal to monster.cpp
     Eigen::MatrixXd V;   // vertices
     Eigen::MatrixXi F;   // triangles
     int side;            // +1 front, -1 back
@@ -46,10 +46,10 @@ struct MeshPart {
 };
 
 struct StitchedMesh {
-    Eigen::MatrixXd V;
-    Eigen::MatrixXi F;
-    Eigen::VectorXi sideFlags;
-    std::vector<bool> dirichlet;
+    Eigen::MatrixXd V; // Nx2 matrix, each row is a vertex [x, y]
+    Eigen::MatrixXi F; // Nx3 matrix, each row is a triangle [i, j, k]
+    Eigen::VectorXi sideFlags; // Nx1, +1 for front-facing, -1 for back-facing
+    std::vector<bool> dirichlet; // Nx1, true if vertex is on drawn boundary Dp (h=0)
 };
 
 class monster {
