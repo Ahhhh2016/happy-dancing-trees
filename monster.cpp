@@ -127,9 +127,11 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         // Step 3: Run constrained Delaunay triangulation (CDT).
         // V2 = output vertices (original boundary points + new interior points)
         // F2 = output triangles
-        // "pQa500" = planar, quiet, max triangle area 500px²
+        // "pQa200q20" = planar, quiet, max triangle area 200px²
+        // a200 — max triangle area 200px²
+        // q20 — minimum angle 20° for quality
 
-        igl::triangle::triangulate(V, E, H, "pQa500", V2, F2);
+        igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
 
         std::cout << "Region " << region.depthOrder << ": "
                   << V2.rows() << " vertices, "
@@ -170,11 +172,19 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         // For each vertex in the back copy...
         std::vector<int> backIndexMap(V2.rows());
         for (int i = 0; i < V2.rows(); i++) {
-            backIndexMap[i] = backOffset;
-            V_global(backOffset, 0) = V2(i, 0);
-            V_global(backOffset, 1) = V2(i, 1);
-            sideFlags(backOffset) = -1;
-            backOffset++;
+            if (isDirichlet[i]) {
+                // Boundary vertex (on Dp) - share the front's index
+                // same position in 3D, this is the seam of the shell
+                backIndexMap[i] = i;  // share front vertex
+            } else {
+                // Interior vertex - give it a new index in the global list
+                // this vertex will get a different z after inflation
+                backIndexMap[i] = backOffset;
+                V_global(backOffset, 0) = V2(i, 0);
+                V_global(backOffset, 1) = V2(i, 1);
+                sideFlags(backOffset) = -1;
+                backOffset++;
+            }
         }
         // Trim V_global and sideFlags to actual size
         // (we pre-allocated for worst case of no sharing)
@@ -235,7 +245,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
     Eigen::MatrixXd V3D(result.V.rows(), 3);
     V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
-    igl::writeOBJ("mesh11.obj", V3D, result.F);
+    igl::writeOBJ("mesh10.obj", V3D, result.F);
 
     return result;
 }
