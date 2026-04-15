@@ -186,7 +186,7 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     Eigen::MatrixXd H(0, 2);
-    igl::triangle::triangulate(V, E, H, "pQa500", V2, F2);
+    igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
 }
 
 
