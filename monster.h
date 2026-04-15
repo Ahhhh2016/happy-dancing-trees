@@ -60,8 +60,24 @@ public:
     Region makeTestLeg();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
     StitchedMesh stitchParts();
-    void stitchRegions(StitchedMesh& mesh);
     std::vector<MeshPart> m_meshParts;
+
+private:
+    // Step 1: Triangulate a region's 2D boundary using CDT
+    void triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
+                           Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                           const std::vector<Eigen::Vector2f>& extraPoints = {});
+
+    // Step 2: Duplicate front/back and stitch along Dp
+    MeshPart stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
+                             int n, int depthOrder);
+
+    // Step 3: Split host mesh along Bp to create a hole for the attachment
+    void splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                      const std::vector<Eigen::Vector2f>& bpPoints);
+
+    // Step 4: Get merging boundary points from a region
+    std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
 };
 
 
