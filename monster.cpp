@@ -51,6 +51,8 @@ Region monster::makeTestLeg() {
 }
 
 StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
+    // avoid bad memory allocation
+    m_meshParts.clear();
 
     // Separate regions into hosts and attachments
     std::vector<Region> hostRegions;
@@ -74,25 +76,37 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     }
 
     // Step 1-4: Triangulate host regions with Bp inserted, then split along Bp
+
+    std::vector<int> hostSplitIndices;
+    MeshPart hostPart;
     for (const Region& region : hostRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
+        Eigen::MatrixXd V, V2;
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
-        splitAlongBp(V2, F2, bpPoints);
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder));
+        hostSplitIndices = splitAlongBp(V2, F2, bpPoints);
+        hostPart = stitchFrontBack(V2, F2, n, region.depthOrder);
     }
 
-    // Step 5-6: Triangulate attachment regions
     for (const Region& region : attachmentRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
+        Eigen::MatrixXd V, V2;
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2);
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder));
+        MeshPart attachPart = stitchFrontBack(V2, F2, n, region.depthOrder);
+        MeshPart combined = stitchAttachmentToHost(hostPart, attachPart, hostSplitIndices, bpPoints);
+        std::cout << "stitchAttachmentToHost returned" << std::endl;
+        std::cout << "combined V: " << combined.V.rows() << " F: " << combined.F.rows()
+                  << " sideFlags: " << combined.sideFlags.size()
+                  << " isDirichlet: " << combined.isDirichlet.size() << std::endl;
+        m_meshParts.push_back(combined);
+        std::cout << "pushed to m_meshParts" << std::endl;
     }
+
+    // Stitch attachment to host along Bp
+    stitchAttachmentToHost(m_meshParts[0], m_meshParts[1], hostSplitIndices, bpPoints);
+
+    std::cout << "About to stitch parts, m_meshParts size: " << m_meshParts.size() << std::endl;
 
     // Step 7: Concatenate all MeshParts into one global StitchedMesh
     // TODO: inter-region stitching along Bp (connect body and limb meshes)
@@ -100,6 +114,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
     Eigen::MatrixXd V3D(result.V.rows(), 3);
     V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
+
     igl::writeOBJ("mesh12.obj", V3D, result.F);
 
     return result;
@@ -188,9 +203,9 @@ MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
     return part;
 }
 
-void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                            const std::vector<Eigen::Vector2f>& bpPoints) {
-    if (bpPoints.size() < 2) return;
+    if (bpPoints.size() < 2) return {};
 
     // Step 1: Find Bp vertex indices in V2
     std::vector<int> bpIndices;
@@ -205,7 +220,7 @@ void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
         }
     }
     std::cout << "Bp indices found: " << bpIndices.size() << std::endl;
-    if (bpIndices.size() < 2) return;
+    if (bpIndices.size() < 2) return {};
 
     // p and q are the two endpoints of Bp
     Eigen::Vector2d p = V2.row(bpIndices[0]);
@@ -251,6 +266,8 @@ void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
 
     std::cout << "Split along Bp: " << bpIndices.size()
               << " vertices duplicated" << std::endl;
+
+    return duplicateIndices;
 }
 
 void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
@@ -303,9 +320,13 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
 }
 
 StitchedMesh monster::stitchParts() {
+    std::cout << "stitchParts called, parts: " << m_meshParts.size() << std::endl;
     StitchedMesh result;
     int vOffset = 0;
+    std::cout << "stitchParts: " << m_meshParts.size() << " parts" << std::endl;
     for (auto& part : m_meshParts) {
+        std::cout << "  processing part V: " << part.V.rows()
+                  << " F: " << part.F.rows() << std::endl;
         for (int i = 0; i < part.V.rows(); i++) {
             result.dirichlet.push_back(part.isDirichlet[i]);
             result.sideFlags.conservativeResize(result.sideFlags.size() + 1);
@@ -324,4 +345,129 @@ StitchedMesh monster::stitchParts() {
     std::cout << "Final mesh: " << result.V.rows() << " vertices, "
               << result.F.rows() << " faces" << std::endl;
     return result;
+}
+
+MeshPart monster::stitchAttachmentToHost(MeshPart& host, MeshPart& attachment,
+                                         const std::vector<int>& hostSplitIndices,
+                                         const std::vector<Eigen::Vector2f>& bpPoints) {
+    // Find Bp vertices in attachment
+    std::vector<int> attachBpIndices;
+    for (const Eigen::Vector2f& bp : bpPoints) {
+        for (int i = 0; i < attachment.V.rows(); i++) {
+            double dx = attachment.V(i,0) - bp.x();
+            double dy = attachment.V(i,1) - bp.y();
+            if (dx*dx + dy*dy < 0.01) {
+                attachBpIndices.push_back(i);
+                break;
+            }
+        }
+    }
+
+    // Build combined vertex list — host vertices first, then attachment
+    // non-Bp vertices. Bp vertices in attachment get remapped to host split vertices.
+    int hostV = host.V.rows();
+    int attachV = attachment.V.rows();
+
+    // Index map for attachment vertices into the combined mesh
+    std::vector<int> attachIndexMap(attachV);
+    std::iota(attachIndexMap.begin(), attachIndexMap.end(), hostV);  // default: append after host
+
+    // Remap front Bp vertices to host split vertices
+    for (int i = 0; i < (int)attachBpIndices.size(); i++) {
+        attachIndexMap[attachBpIndices[i]] = hostSplitIndices[i];
+    }
+
+    // Remap back Bp vertices to host back split vertices
+    for (int i = 0; i < (int)attachBpIndices.size(); i++) {
+        int backAttach = attachBpIndices[i] + attachV / 2;
+        int backHost   = hostSplitIndices[i] + hostV / 2;
+        std::cout << "backAttach: " << backAttach << " attachV: " << attachV << std::endl;
+        std::cout << "backHost: " << backHost << " hostV: " << hostV << std::endl;
+        if (backAttach < attachV && backHost < hostV) {
+            attachIndexMap[backAttach] = backHost;
+        } else {
+            std::cout << "WARNING: back index out of bounds!" << std::endl;
+        }
+    }
+
+    // Build combined V
+    MeshPart combined;
+    combined.V.resize(hostV + attachV, 2);
+    combined.V.topRows(hostV) = host.V;
+    combined.V.bottomRows(attachV) = attachment.V;
+
+    // Build combined sideFlags
+    combined.sideFlags.resize(hostV + attachV);
+    combined.sideFlags.head(hostV) = host.sideFlags;
+    combined.sideFlags.tail(attachV) = attachment.sideFlags;
+
+    // Build combined isDirichlet
+    combined.isDirichlet.insert(combined.isDirichlet.end(),
+                                host.isDirichlet.begin(), host.isDirichlet.end());
+    combined.isDirichlet.insert(combined.isDirichlet.end(),
+                                attachment.isDirichlet.begin(), attachment.isDirichlet.end());
+
+    // Build combined F — host faces unchanged, attachment faces remapped
+    int hostF = host.F.rows();
+    int attachF = attachment.F.rows();
+    combined.F.resize(hostF + attachF, 3);
+    combined.F.topRows(hostF) = host.F;
+
+    for (int i = 0; i < attachF; i++) {
+        for (int j = 0; j < 3; j++) {
+            combined.F(hostF + i, j) = attachIndexMap[attachment.F(i,j)];
+        }
+    }
+
+    // Remove unreferenced vertices (the attachment's Bp vertices that were remapped)
+    // Find which vertices are actually used
+    std::vector<bool> used(combined.V.rows(), false);
+    for (int i = 0; i < combined.F.rows(); i++) {
+        for (int j = 0; j < 3; j++) {
+            used[combined.F(i,j)] = true;
+        }
+    }
+
+    // Build compact index map
+    std::vector<int> compactMap(combined.V.rows(), -1);
+    int newIdx = 0;
+    for (int i = 0; i < (int)combined.V.rows(); i++) {
+        if (used[i]) compactMap[i] = newIdx++;
+    }
+
+    // Rebuild V, sideFlags, isDirichlet with only used vertices
+    Eigen::MatrixXd V_compact(newIdx, 2);
+    Eigen::VectorXi sideFlags_compact(newIdx);
+    std::vector<bool> dirichlet_compact(newIdx);
+    for (int i = 0; i < (int)combined.V.rows(); i++) {
+        if (compactMap[i] != -1) {
+            V_compact.row(compactMap[i]) = combined.V.row(i);
+            sideFlags_compact(compactMap[i]) = combined.sideFlags(i);
+            dirichlet_compact[compactMap[i]] = combined.isDirichlet[i];
+        }
+    }
+
+    // Remap faces
+    for (int i = 0; i < combined.F.rows(); i++) {
+        for (int j = 0; j < 3; j++) {
+            combined.F(i,j) = compactMap[combined.F(i,j)];
+        }
+    }
+
+    combined.V = V_compact;
+    combined.sideFlags = sideFlags_compact;
+    combined.isDirichlet = dirichlet_compact;
+
+    std::cout << "After cleanup: " << combined.V.rows() << " vertices" << std::endl;
+
+    combined.depthOrder = host.depthOrder;
+
+    std::cout << "Combined mesh: " << combined.V.rows() << " vertices, "
+              << combined.F.rows() << " faces" << std::endl;
+
+    std::cout << "Combined F max: " << combined.F.maxCoeff() << std::endl;
+    std::cout << "Combined V rows: " << combined.V.rows() << std::endl;
+    std::cout << "Returning combined" << std::endl;
+
+    return combined;
 }
