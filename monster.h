@@ -73,15 +73,11 @@ private:
                              int n, int depthOrder);
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
-    std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                                  const std::vector<Eigen::Vector2f>& bpPoints);
+    void splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                      const std::vector<Eigen::Vector2f>& bpPoints);
 
     // Step 4: Get merging boundary points from a region
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
-
-    MeshPart stitchAttachmentToHost(MeshPart& host, MeshPart& attachment,
-                                    const std::vector<int>& hostSplitIndices,
-                                    const std::vector<Eigen::Vector2f>& bpPoints);
 };
 
 
