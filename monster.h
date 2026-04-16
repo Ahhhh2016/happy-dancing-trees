@@ -42,7 +42,8 @@ struct MeshPart {
     Eigen::MatrixXd V;        // stitched front+back vertices
     Eigen::MatrixXi F;        // stitched front+back faces
     Eigen::VectorXi sideFlags;
-    std::vector<bool> isDirichlet;
+    std::vector<bool> isDirichlet; // on Dp: h=0 in Poisson solve
+    std::vector<bool> isMerging;      // on Bp: candidate for welding
     int depthOrder;
 };
 
@@ -50,7 +51,8 @@ struct StitchedMesh {
     Eigen::MatrixXd V; // Nx2 matrix, each row is a vertex [x, y]
     Eigen::MatrixXi F; // Nx3 matrix, each row is a triangle [i, j, k]
     Eigen::VectorXi sideFlags; // Nx1, +1 for front-facing, -1 for back-facing
-    std::vector<bool> dirichlet; // Nx1, true if vertex is on drawn boundary Dp (h=0)
+    std::vector<bool> isDirichlet; // Nx1, true if vertex is on drawn boundary Dp (h=0)
+    std::vector<bool> isMerging;   // on Bp: candidate for welding
 };
 
 class monster {
@@ -61,6 +63,9 @@ public:
     StitchedMesh buildMesh(const std::vector<Region>& regions);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
+    std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,
+                                     const std::vector<Eigen::Vector2f>& bpPoints,
+                                     double eps = 0.5f);
 
 private:
     // Step 1: Triangulate a region's 2D boundary using CDT
@@ -70,7 +75,8 @@ private:
 
     // Step 2: Duplicate front/back and stitch along Dp
     MeshPart stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                             int n, int depthOrder);
+                                      int n, int depthOrder,
+                                      const std::vector<bool>& isMergingIn);
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
     void splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
@@ -78,6 +84,8 @@ private:
 
     // Step 4: Get merging boundary points from a region
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
+
+    void weldSeams(StitchedMesh& mesh);
 };
 
 

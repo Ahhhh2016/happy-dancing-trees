@@ -1,6 +1,7 @@
 #include "monster.h"
 #include <iostream>
 #include <igl/writeOBJ.h>
+#include <igl/remove_unreferenced.h>
 
 using namespace Eigen;
 using namespace std;
@@ -81,7 +82,9 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
         splitAlongBp(V2, F2, bpPoints);
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder));
+        auto isMerging = buildIsMerging(V2, bpPoints);
+
+        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder, isMerging));
     }
 
     // Step 5-6: Triangulate attachment regions
@@ -91,7 +94,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2);
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder));
+        auto isMerging = buildIsMerging(V2, bpPoints);
+        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder, isMerging));
     }
 
     // Step 7: Concatenate all MeshParts into one global StitchedMesh
@@ -105,6 +109,27 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     return result;
 }
 
+std::vector<bool> monster::buildIsMerging(const Eigen::MatrixXd& V,
+                                 const std::vector<Eigen::Vector2f>& bpPoints,
+                                 double eps) {
+    std::vector<bool> isMerging(V.rows(), false);
+    if (bpPoints.size() < 2) return isMerging;
+    for (int i = 0; i < V.rows(); i++) {
+        Eigen::Vector2d p = V.row(i);
+        for (int j = 0; j + 1 < (int)bpPoints.size(); j++) {
+            Eigen::Vector2d a = bpPoints[j].cast<double>();
+            Eigen::Vector2d b = bpPoints[j+1].cast<double>();
+            // distance from p to segment ab
+            Eigen::Vector2d ab = b - a, ap = p - a;
+            double t = ap.dot(ab) / ab.dot(ab);
+            t = std::max(0.0, std::min(1.0, t));
+            double dist = (p - (a + t * ab)).norm();
+            if (dist < eps) { isMerging[i] = true; break; }
+        }
+    }
+    return isMerging;
+}
+
 std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& region) {
     for (const Stroke& stroke : region.boundaries) {
         if (stroke.isMergingBoundary) {
@@ -115,7 +140,8 @@ std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& reg
 }
 
 MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                                  int n, int depthOrder) {
+                                  int n, int depthOrder,
+                                  const std::vector<bool>& isMergingIn) {
     // Mark the first n vertices as Dirichlet — these are the original boundary
     // points (Dp) that will be pinned to z=0 in the Poisson solve
     std::vector<bool> isDirichlet(V2.rows(), false);
@@ -180,11 +206,23 @@ MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
     part.V = V_global;
     part.F = F_global;
     part.sideFlags = sideFlags;
-    part.isDirichlet = std::vector<bool>(V_global.rows(), false);
-    for (int i = 0; i < V_global.rows(); i++) {
-        part.isDirichlet[i] = i < n;
-    }
     part.depthOrder = depthOrder;
+
+    const int totalV = V_global.rows();
+    const int frontCount = V2.rows();
+    part.isDirichlet.resize(totalV, false);
+    part.isMerging.resize(totalV, false);
+
+    for (int i = 0; i < totalV; i++) {
+        bool isFront = (i < frontCount);
+        int srcIdx = isFront ? i : (i - frontCount);
+        // Dirichlet: first n vertices are on Dp
+        part.isDirichlet[i] = (srcIdx < n);
+        // Merging: propagate from input, for both front and back copies
+        if (!isMergingIn.empty())
+            part.isMerging[i] = isMergingIn[srcIdx];
+    }
+
     return part;
 }
 
@@ -212,24 +250,26 @@ void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
     Eigen::Vector2d q = V2.row(bpIndices[1]);
     Eigen::Vector2d edge = q - p;
 
-    // Step 2: Duplicate Bp vertices
+    // Step 2: Duplicate Bp vertices (skip first and last — they sit on Dp
+    // and are shared by the silhouette boundary, duplicating them causes fans)
     int nOld = V2.rows();
-    V2.conservativeResize(nOld + bpIndices.size(), 2);
+    std::vector<int> interiorBpIndices;
+    for (int i = 1; i < (int)bpIndices.size() - 1; i++)  // skip 0 and last
+        interiorBpIndices.push_back(bpIndices[i]);
+
+    V2.conservativeResize(nOld + interiorBpIndices.size(), 2);
     std::vector<int> duplicateIndices;
-    for (int i = 0; i < (int)bpIndices.size(); i++) {
-        V2.row(nOld + i) = V2.row(bpIndices[i]);
+    for (int i = 0; i < (int)interiorBpIndices.size(); i++) {
+        V2.row(nOld + i) = V2.row(interiorBpIndices[i]);
         duplicateIndices.push_back(nOld + i);
     }
 
-    // Step 3: Classify triangles and remap
+    // Step 3: Classify triangles and remap (use interiorBpIndices not bpIndices)
     for (int t = 0; t < F2.rows(); t++) {
         bool touchesBp = false;
-        for (int j = 0; j < 3; j++) {
-            for (int bi : bpIndices) {
+        for (int j = 0; j < 3; j++)
+            for (int bi : interiorBpIndices)
                 if (F2(t,j) == bi) { touchesBp = true; break; }
-            }
-            if (touchesBp) break;
-        }
         if (!touchesBp) continue;
 
         // Compute triangle centroid
@@ -307,7 +347,8 @@ StitchedMesh monster::stitchParts() {
     int vOffset = 0;
     for (auto& part : m_meshParts) {
         for (int i = 0; i < part.V.rows(); i++) {
-            result.dirichlet.push_back(part.isDirichlet[i]);
+            result.isDirichlet.push_back(part.isDirichlet[i]);
+            result.isMerging.push_back(part.isMerging[i]);
             result.sideFlags.conservativeResize(result.sideFlags.size() + 1);
             result.sideFlags(result.sideFlags.size() - 1) = part.sideFlags(i);
         }
@@ -321,7 +362,67 @@ StitchedMesh monster::stitchParts() {
 
         vOffset += part.V.rows();
     }
+    weldSeams(result);
     std::cout << "Final mesh: " << result.V.rows() << " vertices, "
               << result.F.rows() << " faces" << std::endl;
     return result;
+}
+
+void monster::weldSeams(StitchedMesh& mesh) {
+    const double WELD_EPS = 1e-6;
+    const int n = mesh.V.rows();
+
+    // build remap: identity initially
+    std::vector<int> remap(n);
+    std::iota(remap.begin(), remap.end(), 0);
+
+    // collect merging boundary vert indices
+    std::vector<int> mergingVerts;
+    for (int i = 0; i < n; i++)
+        if (mesh.isMerging[i]) mergingVerts.push_back(i);
+
+    std::map<std::pair<std::pair<int,int>, int>, int> sideGrid;
+
+    // spatial hash: bucket by rounded position
+    for (int i : mergingVerts) {
+        auto key = std::make_pair(
+            (int)std::round(mesh.V(i,0) / WELD_EPS),
+            (int)std::round(mesh.V(i,1) / WELD_EPS));
+
+        // encode side into the key so front never matches back
+        auto sideKey = std::make_pair(key, mesh.sideFlags(i));
+
+        auto it = sideGrid.find(sideKey);
+        if (it != sideGrid.end())
+            remap[i] = it->second;
+        else
+            sideGrid[sideKey] = i;
+    }
+
+    // apply remap to F
+    for (int f = 0; f < mesh.F.rows(); f++)
+        for (int c = 0; c < 3; c++)
+            mesh.F(f,c) = remap[mesh.F(f,c)];
+
+    // compact: remove unreferenced vertices
+    Eigen::MatrixXd newV;
+    Eigen::MatrixXi newF;
+    Eigen::VectorXi I;
+    igl::remove_unreferenced(mesh.V, mesh.F, newV, newF, I);
+
+    // remap metadata
+    Eigen::VectorXi newSideFlags(newV.rows());
+    std::vector<bool> newDirichlet(newV.rows());
+    std::vector<bool> newMerging(newV.rows());
+    for (int i = 0; i < I.rows(); i++) {
+        newSideFlags(i)  = mesh.sideFlags(I(i));
+        newDirichlet[i]  = mesh.isDirichlet[I(i)];
+        newMerging[i]    = mesh.isMerging[I(i)];
+    }
+
+    mesh.V         = newV;
+    mesh.F         = newF;
+    mesh.sideFlags = newSideFlags;
+    mesh.isDirichlet = newDirichlet;
+    mesh.isMerging   = newMerging;
 }
