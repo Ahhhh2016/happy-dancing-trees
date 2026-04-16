@@ -44,15 +44,17 @@ struct MeshPart {
     Eigen::VectorXi sideFlags;
     std::vector<bool> isDirichlet; // on Dp: h=0 in Poisson solve
     std::vector<bool> isMerging;      // on Bp: candidate for welding
+    std::vector<std::pair<int,int>> armpitPairs;
     int depthOrder;
 };
 
 struct StitchedMesh {
-    Eigen::MatrixXd V; // Nx2 matrix, each row is a vertex [x, y]
-    Eigen::MatrixXi F; // Nx3 matrix, each row is a triangle [i, j, k]
-    Eigen::VectorXi sideFlags; // Nx1, +1 for front-facing, -1 for back-facing
-    std::vector<bool> isDirichlet; // Nx1, true if vertex is on drawn boundary Dp (h=0)
-    std::vector<bool> isMerging;   // on Bp: candidate for welding
+    Eigen::MatrixXd V;
+    Eigen::MatrixXi F;
+    Eigen::VectorXi sideFlags;
+    std::vector<bool> isDirichlet;
+    std::vector<bool> isMerging;
+    std::vector<std::pair<int,int>> armpitPairs; // front/back index pairs at Bp endpoints
 };
 
 class monster {
@@ -73,13 +75,13 @@ private:
                            Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                            const std::vector<Eigen::Vector2f>& extraPoints = {});
 
-    // Step 2: Duplicate front/back and stitch along Dp
-    MeshPart stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
+    // Step 2: Duplicate front/back of mesh
+    MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
                                       int n, int depthOrder,
                                       const std::vector<bool>& isMergingIn);
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
-    void splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+    std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                       const std::vector<Eigen::Vector2f>& bpPoints);
 
     // Step 4: Get merging boundary points from a region

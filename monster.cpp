@@ -81,11 +81,15 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
-        splitAlongBp(V2, F2, bpPoints);
+        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);  // capture return
         auto isMerging = buildIsMerging(V2, bpPoints);
-
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder, isMerging));
+        MeshPart part = createFrontBack(V2, F2, n, region.depthOrder, isMerging);
+        // store armpit pairs: front index i, back index i + V2.rows()
+        for (int idx : armpitIndices)
+            part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
+        m_meshParts.push_back(part);
     }
+
 
     // Step 5-6: Triangulate attachment regions
     for (const Region& region : attachmentRegions) {
@@ -95,7 +99,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         int n;
         triangulateRegion(region, V, n, V2, F2);
         auto isMerging = buildIsMerging(V2, bpPoints);
-        m_meshParts.push_back(stitchFrontBack(V2, F2, n, region.depthOrder, isMerging));
+        m_meshParts.push_back(createFrontBack(V2, F2, n, region.depthOrder, isMerging));
     }
 
     // Step 7: Concatenate all MeshParts into one global StitchedMesh
@@ -139,7 +143,7 @@ std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& reg
     return {};
 }
 
-MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
+MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
                                   int n, int depthOrder,
                                   const std::vector<bool>& isMergingIn) {
     // Mark the first n vertices as Dirichlet — these are the original boundary
@@ -226,9 +230,9 @@ MeshPart monster::stitchFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
     return part;
 }
 
-void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                            const std::vector<Eigen::Vector2f>& bpPoints) {
-    if (bpPoints.size() < 2) return;
+    if (bpPoints.size() < 2) return {};
 
     // Step 1: Find Bp vertex indices in V2
     std::vector<int> bpIndices;
@@ -243,7 +247,7 @@ void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
         }
     }
     std::cout << "Bp indices found: " << bpIndices.size() << std::endl;
-    if (bpIndices.size() < 2) return;
+    if (bpIndices.size() < 2) return {};
 
     // p and q are the two endpoints of Bp
     Eigen::Vector2d p = V2.row(bpIndices[0]);
@@ -291,6 +295,8 @@ void monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
 
     std::cout << "Split along Bp: " << bpIndices.size()
               << " vertices duplicated" << std::endl;
+    // return the endpoint indices (the armpits)
+    return { bpIndices.front(), bpIndices.back() };
 }
 
 void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
@@ -360,6 +366,10 @@ StitchedMesh monster::stitchParts() {
         result.F.conservativeResize(oldFRows + part.F.rows(), 3);
         result.F.bottomRows(part.F.rows()) = part.F.array() + vOffset;
 
+        // propagate armpit pairs with offset
+        for (auto& p : part.armpitPairs)
+            result.armpitPairs.push_back({p.first + vOffset, p.second + vOffset});
+
         vOffset += part.V.rows();
     }
     weldSeams(result);
@@ -372,57 +382,82 @@ void monster::weldSeams(StitchedMesh& mesh) {
     const double WELD_EPS = 1e-6;
     const int n = mesh.V.rows();
 
-    // build remap: identity initially
     std::vector<int> remap(n);
     std::iota(remap.begin(), remap.end(), 0);
 
-    // collect merging boundary vert indices
-    std::vector<int> mergingVerts;
-    for (int i = 0; i < n; i++)
-        if (mesh.isMerging[i]) mergingVerts.push_back(i);
-
+    // Pass 1: weld merging boundary vertices (Bp) — front-to-front, back-to-back only
     std::map<std::pair<std::pair<int,int>, int>, int> sideGrid;
-
-    // spatial hash: bucket by rounded position
-    for (int i : mergingVerts) {
+    for (int i = 0; i < n; i++) {
+        if (!mesh.isMerging[i]) continue;
         auto key = std::make_pair(
-            (int)std::round(mesh.V(i,0) / WELD_EPS),
-            (int)std::round(mesh.V(i,1) / WELD_EPS));
-
-        // encode side into the key so front never matches back
-        auto sideKey = std::make_pair(key, mesh.sideFlags(i));
-
-        auto it = sideGrid.find(sideKey);
+            std::make_pair(
+                (int)std::round(mesh.V(i,0) / WELD_EPS),
+                (int)std::round(mesh.V(i,1) / WELD_EPS)),
+            mesh.sideFlags(i)); // encode side: front only matches front
+        auto it = sideGrid.find(key);
         if (it != sideGrid.end())
             remap[i] = it->second;
         else
-            sideGrid[sideKey] = i;
+            sideGrid[key] = i;
     }
 
-    // apply remap to F
+    // Pass 2: weld Dp silhouette vertices — front matches back to close the surface
+    std::map<std::pair<int,int>, int> dpGrid;
+    for (int i = 0; i < n; i++) {
+        if (!mesh.isDirichlet[i]) continue;
+        if (mesh.isMerging[i]) continue;  // already handled in pass 1, skip
+        auto key = std::make_pair(
+            (int)std::round(mesh.V(i,0) / WELD_EPS),
+            (int)std::round(mesh.V(i,1) / WELD_EPS));
+        auto it = dpGrid.find(key);
+        if (it != dpGrid.end())
+            remap[i] = remap[it->second];
+        else
+            dpGrid[key] = i;
+    }
+
+    // Apply remap to F
     for (int f = 0; f < mesh.F.rows(); f++)
         for (int c = 0; c < 3; c++)
             mesh.F(f,c) = remap[mesh.F(f,c)];
 
-    // compact: remove unreferenced vertices
-    Eigen::MatrixXd newV;
-    Eigen::MatrixXi newF;
-    Eigen::VectorXi I;
-    igl::remove_unreferenced(mesh.V, mesh.F, newV, newF, I);
+    // Compact
+    int nNew = 0;
+    std::vector<int> reindex(n, -1);
+    for (int f = 0; f < mesh.F.rows(); f++)
+        for (int c = 0; c < 3; c++)
+            if (reindex[mesh.F(f,c)] == -1)
+                reindex[mesh.F(f,c)] = nNew++;
 
-    // remap metadata
-    Eigen::VectorXi newSideFlags(newV.rows());
-    std::vector<bool> newDirichlet(newV.rows());
-    std::vector<bool> newMerging(newV.rows());
-    for (int i = 0; i < I.rows(); i++) {
-        newSideFlags(i)  = mesh.sideFlags(I(i));
-        newDirichlet[i]  = mesh.isDirichlet[I(i)];
-        newMerging[i]    = mesh.isMerging[I(i)];
+    Eigen::MatrixXd newV(nNew, mesh.V.cols());
+    Eigen::VectorXi newSideFlags(nNew);
+    std::vector<bool> newDirichlet(nNew), newMerging(nNew);
+    std::vector<std::pair<int,int>> newArmpitPairs;
+
+    for (int i = 0; i < n; i++) {
+        if (reindex[i] == -1) continue;
+        newV.row(reindex[i])     = mesh.V.row(i);
+        newSideFlags(reindex[i]) = mesh.sideFlags(i);
+        newDirichlet[reindex[i]] = mesh.isDirichlet[i];
+        newMerging[reindex[i]]   = mesh.isMerging[i];
     }
 
-    mesh.V         = newV;
-    mesh.F         = newF;
+    // remap armpit pairs through both remap and reindex
+    for (auto& p : mesh.armpitPairs) {
+        int a = reindex[remap[p.first]];
+        int b = reindex[remap[p.second]];
+        if (a >= 0 && b >= 0)
+            newArmpitPairs.push_back({a, b});
+    }
+
+    Eigen::MatrixXi newF = mesh.F;
+    for (int f = 0; f < newF.rows(); f++)
+        for (int c = 0; c < 3; c++)
+            newF(f,c) = reindex[mesh.F(f,c)];
+
+    mesh.V = newV; mesh.F = newF;
     mesh.sideFlags = newSideFlags;
     mesh.isDirichlet = newDirichlet;
-    mesh.isMerging   = newMerging;
+    mesh.isMerging = newMerging;
+    mesh.armpitPairs = newArmpitPairs;
 }
