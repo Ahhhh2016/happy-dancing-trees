@@ -77,8 +77,9 @@ private:
 
     // Step 2: Duplicate front/back of mesh
     MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                                      int n, int depthOrder,
-                                      const std::vector<bool>& isMergingIn);
+                             const std::vector<bool>& isDirichletIn,
+                             int depthOrder,
+                             const std::vector<bool>& isMergingIn);
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
     std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
@@ -88,6 +89,10 @@ private:
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
 
     void weldSeams(StitchedMesh& mesh);
+
+    std::vector<bool> buildIsDirichlet(const Eigen::MatrixXd& V2,
+                                       const Eigen::MatrixXd& V_input,
+                                       int n, double eps = 0.5);
 };
 
 

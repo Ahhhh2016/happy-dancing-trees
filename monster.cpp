@@ -81,13 +81,24 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
-        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);  // capture return
-        auto isMerging = buildIsMerging(V2, bpPoints);
-        MeshPart part = createFrontBack(V2, F2, n, region.depthOrder, isMerging);
-        // store armpit pairs: front index i, back index i + V2.rows()
+        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);
+        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
+        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
+        int overlap = 0;
+        for (int i = 0; i < V2.rows(); i++)
+            if (isDirichlet[i] && isMerging[i]) overlap++;
+        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
         for (int idx : armpitIndices)
             part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
         m_meshParts.push_back(part);
+
+        std::cout << "Host n (boundary input points): " << n << std::endl;
+        std::cout << "Host V2 total: " << V2.rows() << std::endl;
+
+        int mCount = 0;
+        for (bool b : isMerging) if (b) mCount++;
+        std::cout << "Merging verts host: " << mCount << " / " << V2.rows() << std::endl;
     }
 
 
@@ -98,8 +109,20 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2);
-        auto isMerging = buildIsMerging(V2, bpPoints);
-        m_meshParts.push_back(createFrontBack(V2, F2, n, region.depthOrder, isMerging));
+        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);  // add this
+        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
+        int overlap = 0;
+        for (int i = 0; i < V2.rows(); i++)
+            if (isDirichlet[i] && isMerging[i]) overlap++;
+        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+        m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
+
+        std::cout << "Attachment n (boundary input points): " << n << std::endl;
+        std::cout << "Attachment V2 total: " << V2.rows() << std::endl;
+
+        int mCount = 0;
+        for (bool b : isMerging) if (b) mCount++;
+        std::cout << "Merging verts attachment: " << mCount << " / " << V2.rows() << std::endl;
     }
 
     // Step 7: Concatenate all MeshParts into one global StitchedMesh
@@ -144,12 +167,12 @@ std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& reg
 }
 
 MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                                  int n, int depthOrder,
-                                  const std::vector<bool>& isMergingIn) {
+                         const std::vector<bool>& isDirichletIn,
+                         int depthOrder,
+                         const std::vector<bool>& isMergingIn) {
     // Mark the first n vertices as Dirichlet — these are the original boundary
     // points (Dp) that will be pinned to z=0 in the Poisson solve
-    std::vector<bool> isDirichlet(V2.rows(), false);
-    for (int i = 0; i < n; i++) isDirichlet[i] = true;
+    std::vector<bool> isDirichlet = isDirichletIn;
 
     // Pre-allocate global vertex list for worst case (all vertices duplicated)
     Eigen::MatrixXd V_global(V2.rows() * 2, 2);
@@ -221,7 +244,7 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
         bool isFront = (i < frontCount);
         int srcIdx = isFront ? i : (i - frontCount);
         // Dirichlet: first n vertices are on Dp
-        part.isDirichlet[i] = (srcIdx < n);
+        part.isDirichlet[i] = isDirichletIn[srcIdx] && !isMergingIn[srcIdx];
         // Merging: propagate from input, for both front and back copies
         if (!isMergingIn.empty())
             part.isMerging[i] = isMergingIn[srcIdx];
@@ -405,7 +428,12 @@ void monster::weldSeams(StitchedMesh& mesh) {
     std::map<std::pair<int,int>, int> dpGrid;
     for (int i = 0; i < n; i++) {
         if (!mesh.isDirichlet[i]) continue;
-        if (mesh.isMerging[i]) continue;  // already handled in pass 1, skip
+        if (mesh.isMerging[i]) continue;
+        // also skip armpit vertices
+        bool isArmpit = false;
+        for (auto& p : mesh.armpitPairs)
+            if (i == p.first || i == p.second) { isArmpit = true; break; }
+        if (isArmpit) continue;
         auto key = std::make_pair(
             (int)std::round(mesh.V(i,0) / WELD_EPS),
             (int)std::round(mesh.V(i,1) / WELD_EPS));
@@ -414,6 +442,8 @@ void monster::weldSeams(StitchedMesh& mesh) {
             remap[i] = remap[it->second];
         else
             dpGrid[key] = i;
+
+
     }
 
     // Apply remap to F
@@ -460,4 +490,25 @@ void monster::weldSeams(StitchedMesh& mesh) {
     mesh.isDirichlet = newDirichlet;
     mesh.isMerging = newMerging;
     mesh.armpitPairs = newArmpitPairs;
+}
+
+std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
+                                   const Eigen::MatrixXd& V_input,
+                                            int n, double eps) {
+    std::vector<bool> isDirichlet(V2.rows(), false);
+    for (int i = 0; i < V2.rows(); i++) {
+        for (int j = 0; j < n; j++) {  // only check Dp points, not Bp
+            double dx = V2(i,0) - V_input(j,0);
+            double dy = V2(i,1) - V_input(j,1);
+            if (dx*dx + dy*dy < eps*eps) {
+                isDirichlet[i] = true;
+                break;
+            }
+        }
+    }
+
+    int dCount = 0;
+    for (bool b : isDirichlet) if (b) dCount++;
+    std::cout << "Dirichlet verts: " << dCount << " / " << V2.rows() << std::endl;
+    return isDirichlet;
 }
