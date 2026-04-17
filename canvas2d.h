@@ -37,11 +37,28 @@ public:
     const std::optional<Stroke> &getActiveStroke() const { return m_activeStroke; }
     const std::vector<Region> &getRegions() const { return m_regions; }
 
+    // Each inner vector is one connected component and holds the indices (of m_regions) of every region in that component. 
+    // If there are n regions partitioned into m connected components, m_connectedRegions has size m and the union of all inner vectors is {0, ..., n-1}.
+    const std::vector<std::vector<int>> &getAllConnectedRegions() const { return m_connectedRegions; }
+
+    // Returns the component (list of region indices) containing regionIdx,
+    // or an empty vector if regionIdx is not connected to any other region.
+    std::vector<int> getConnectedRegions(int regionIdx) const;
+
 private:
     std::vector<RGBA> m_data;
     std::vector<Stroke> m_strokes; // Only contains user drawn Dp
     std::vector<Region> m_regions; // Contains all the regions, and in boundaries containing closing curves
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
+
+    // Partition of m_regions into connected components. 
+    // Each inner vector is one connected component and holds the indices (of m_regions) of every region in that component. 
+    // Maintained incrementally as new regions are committed.
+    std::vector<std::vector<int>> m_connectedRegions;
+
+    // Reverse index: m_regionToComponent[r] is the index into
+    // m_connectedRegions of the component that contains region r. 
+    std::vector<int> m_regionToComponent;
 
     void mouseDown(const QPointF &point);
     void mouseDragged(const QPointF &point);
@@ -67,7 +84,10 @@ private:
     void beginStroke(const QPointF &point);
     void appendPointToActiveStroke(const QPointF &point);
     void finishStroke();
-    bool overlapsExistingRegions(const Region &region) const;
+    // Returns indices into m_regions of every existing region that the given
+    // region overlaps (via fill-area intersection or boundary-stroke
+    // intersection). Empty vector means the region is disjoint from all others.
+    std::vector<int> findOverlappingRegions(const Region &region) const;
     Stroke makeClosingCurve(const Stroke &openStroke) const;
     Region makeRegionFromStroke(const Stroke &openStroke, const Stroke &closingCurve) const;
     int computeDepthOrderForStroke(const Stroke &stroke) const;
