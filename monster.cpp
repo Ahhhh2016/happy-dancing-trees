@@ -412,11 +412,18 @@ void monster::weldSeams(StitchedMesh& mesh) {
     std::map<std::pair<std::pair<int,int>, int>, int> sideGrid;
     for (int i = 0; i < n; i++) {
         if (!mesh.isMerging[i]) continue;
+
+        // skip armpit vertices — they stay as coincident but separate
+        bool isArmpit = false;
+        for (auto& p : mesh.armpitPairs)
+            if (i == p.first || i == p.second) { isArmpit = true; break; }
+        if (isArmpit) continue;
+
         auto key = std::make_pair(
             std::make_pair(
                 (int)std::round(mesh.V(i,0) / WELD_EPS),
                 (int)std::round(mesh.V(i,1) / WELD_EPS)),
-            mesh.sideFlags(i)); // encode side: front only matches front
+            mesh.sideFlags(i));
         auto it = sideGrid.find(key);
         if (it != sideGrid.end())
             remap[i] = it->second;
