@@ -60,7 +60,8 @@ struct StitchedMesh {
 class monster {
 public:
     monster();
-    StitchedMesh buildMesh(const std::vector<Region>& regions);
+    StitchedMesh buildMesh(const std::vector<Region>& regions,
+                           const std::vector<std::vector<int>>& connectedRegions);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
     std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,
@@ -70,8 +71,17 @@ public:
 private:
     // Step 1: Triangulate a region's 2D boundary using CDT
     void triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
-                           Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                           const std::vector<Eigen::Vector2f>& extraPoints = {});
+                                    Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
+                                    const std::vector<Eigen::Vector2f>& extraPoints);
+
+    void triangulateRegions(
+        const Region& host,
+        const std::vector<const Region*>& attachments,
+        Eigen::MatrixXd& V2,
+        Eigen::MatrixXi& F2,
+        std::vector<bool>& isDirichlet,
+        std::vector<bool>& isMerging,
+        std::vector<std::pair<int,int>>& armpitPairs);
 
     // Step 2: Duplicate front/back of mesh
     MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
