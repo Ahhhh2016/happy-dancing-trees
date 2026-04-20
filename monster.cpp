@@ -8,49 +8,6 @@ using namespace std;
 
 monster::monster() {}
 
-Region monster::makeTestBody() {
-    Stroke boundary;
-    boundary.points = {
-        {-1.0,  0.0},
-        {-0.7,  0.7},
-        { 0.0,  1.0},
-        { 0.7,  0.7},
-        { 1.0,  0.0},
-        { 0.7, -0.7},
-        { 0.0, -1.0},
-        {-0.7, -0.7},
-        {-1.0f, 0.0f}, // close it
-    };
-    boundary.depthOrder = 1;
-
-    Region r;
-    r.boundaries = { boundary };
-    r.depthOrder = 1;
-
-    return r;
-}
-
-Region monster::makeTestLeg() {
-    Stroke drawn;
-    drawn.points = {
-        {-0.3, -0.7},  // top left, sits on body boundary
-        {-0.3, -1.5},  // bottom left
-        { 0.3, -1.5},  // bottom right
-        { 0.3, -0.7},  // top right, sits on body boundary
-    };
-    drawn.depthOrder = 0;
-
-    Stroke closing;
-    closing.points = { { 0.3f, -0.7f }, {-0.3f, -0.7f } };
-    closing.isClosingCurve = true;
-    closing.isMergingBoundary = true;
-
-    Region r;
-    r.boundaries = { drawn, closing };
-    r.depthOrder = 0;
-    return r;
-}
-
 StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
 
     // Separate regions into hosts and attachments

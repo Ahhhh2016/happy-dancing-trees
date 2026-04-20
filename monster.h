@@ -60,8 +60,6 @@ struct StitchedMesh {
 class monster {
 public:
     monster();
-    Region makeTestBody();
-    Region makeTestLeg();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;

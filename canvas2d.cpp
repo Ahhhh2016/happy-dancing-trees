@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iostream>
 #include <cmath>
+#include <set>
 #include "settings.h"
 
 namespace {
@@ -110,6 +111,8 @@ void Canvas2D::clearCanvas() {
     m_data.assign(m_width * m_height, RGBA{255, 255, 255, 255});
     m_strokes.clear();
     m_regions.clear();
+    m_connectedRegions.clear();
+    m_regionToComponent.clear();
     m_activeStroke.reset();
     settings.imagePath = "";
     displayImage();
@@ -133,6 +136,8 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
     }
     m_strokes.clear();
     m_regions.clear();
+    m_connectedRegions.clear();
+    m_regionToComponent.clear();
     m_activeStroke.reset();
     displayImage();
     return true;
@@ -215,35 +220,54 @@ void Canvas2D::finishStroke() {
     m_activeStroke.reset();
 }
 
-bool Canvas2D::overlapsExistingRegions(const Region &region) const {
+std::vector<int> Canvas2D::findOverlappingRegions(const Region &region) const {
+    std::vector<int> overlapping;
     if (region.boundaries.empty()) {
-        return false;
+        return overlapping;
     }
 
     const QPainterPath currentFillPath = makeClosedFillPath(region.boundaries.front());
     if (currentFillPath.isEmpty()) {
-        return false;
+        return overlapping;
     }
 
-    for (const Region &existingRegion : m_regions) {
+    for (std::size_t idx = 0; idx < m_regions.size(); ++idx) {
+        const Region &existingRegion = m_regions[idx];
         if (existingRegion.boundaries.empty()) {
             continue;
         }
 
+        bool overlaps = false;
         const QPainterPath existingFillPath = makeClosedFillPath(existingRegion.boundaries.front());
         if (!currentFillPath.intersected(existingFillPath).isEmpty()) {
-            return true;
-        }
-
-        for (const Stroke &currentBoundary : region.boundaries) {
-            for (const Stroke &existingBoundary : existingRegion.boundaries) {
-                if (strokesIntersect(currentBoundary, existingBoundary)) {
-                    return true;
+            overlaps = true;
+        } else {
+            for (const Stroke &currentBoundary : region.boundaries) {
+                for (const Stroke &existingBoundary : existingRegion.boundaries) {
+                    if (strokesIntersect(currentBoundary, existingBoundary)) {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if (overlaps) {
+                    break;
                 }
             }
         }
+
+        if (overlaps) {
+            overlapping.push_back(static_cast<int>(idx));
+        }
     }
-    return false;
+    return overlapping;
+}
+
+std::vector<int> Canvas2D::getConnectedRegions(int regionIdx) const {
+    if (regionIdx < 0 ||
+        static_cast<std::size_t>(regionIdx) >= m_regionToComponent.size()) {
+        return {};
+    }
+    return m_connectedRegions[m_regionToComponent[regionIdx]];
 }
 
 Stroke Canvas2D::makeClosingCurve(const Stroke &openStroke) const {
@@ -295,15 +319,50 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     }
 
     Region region = makeRegionFromStroke(depthAssignedStroke, closingCurve);
+    const std::vector<int> overlapping = findOverlappingRegions(region);
     if (!closingCurve.points.empty() &&
         closingCurve.isClosingCurve &&
-        overlapsExistingRegions(region)) {
+        !overlapping.empty()) {
         closingCurve.isMergingBoundary = true;
         region.boundaries.back().isMergingBoundary = true;
     }
 
     m_strokes.push_back(depthAssignedStroke);
     m_regions.push_back(region);
+
+    const int newRegionIdx = static_cast<int>(m_regions.size()) - 1;
+
+    // Collect (via the reverse-index map) the indices of every existing
+    // component that touches any overlapping region.
+    std::set<int> touchingComponentIdxs;
+    for (int r : overlapping) {
+        touchingComponentIdxs.insert(m_regionToComponent[r]);
+    }
+
+    // Merge all touching components + the new region into one new component.
+    std::vector<int> mergedComponent;
+    mergedComponent.push_back(newRegionIdx);
+    for (int ci : touchingComponentIdxs) {
+        const std::vector<int> &component = m_connectedRegions[ci];
+        mergedComponent.insert(mergedComponent.end(), component.begin(), component.end());
+    }
+
+    // Erase merged components from the back so earlier indices stay valid.
+    for (auto it = touchingComponentIdxs.rbegin(); it != touchingComponentIdxs.rend(); ++it) {
+        m_connectedRegions.erase(m_connectedRegions.begin() + *it);
+    }
+
+    m_connectedRegions.push_back(std::move(mergedComponent));
+
+    // Rebuild the reverse index. Component indices may have shifted after the
+    // erases above, so walk every component and remap all of its regions.
+    m_regionToComponent.assign(m_regions.size(), -1);
+    for (int ci = 0; ci < static_cast<int>(m_connectedRegions.size()); ++ci) {
+        for (int r : m_connectedRegions[ci]) {
+            m_regionToComponent[r] = ci;
+        }
+    }
+
     renderRegion(region);
 }
 
