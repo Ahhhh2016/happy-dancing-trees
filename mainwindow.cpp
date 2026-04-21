@@ -14,6 +14,12 @@
 #include <iostream>
 
 MainWindow::MainWindow()
+    : m_canvas(nullptr),
+      m_viewStack(nullptr),
+      m_canvasPageIndex(-1),
+      m_meshPageIndex(-1),
+      m_toggleMeshButton(nullptr),
+      m_glWidget(nullptr)
 {
     setWindowTitle("2D Projects");
 
@@ -30,10 +36,19 @@ MainWindow::MainWindow()
     setupCanvas2D();
     resize(800, 600);
 
+    // Main viewing area: swap between the 2D canvas and the 3D mesh viewer.
+    m_viewStack = new QStackedWidget();
+
     QScrollArea *scrollArea = new QScrollArea();
     scrollArea->setWidget(m_canvas);
     scrollArea->setWidgetResizable(true);
-    hLayout->addWidget(scrollArea, 1);
+    m_canvasPageIndex = m_viewStack->addWidget(scrollArea);
+
+    m_glWidget = new GLWidget();
+    m_meshPageIndex = m_viewStack->addWidget(m_glWidget);
+
+    m_viewStack->setCurrentIndex(m_canvasPageIndex);
+    hLayout->addWidget(m_viewStack, 1);
 
     QWidget *brushGroup = new QWidget();
     QVBoxLayout *brushLayout = new QVBoxLayout();
@@ -50,11 +65,11 @@ MainWindow::MainWindow()
     addPushButton(brushLayout, "Revert Image", &MainWindow::onRevertButtonClick);
     addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
     addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
-    addPushButton(brushLayout, "Build Mesh", &MainWindow::onBuildMeshButtonClick);
-    addPushButton(brushLayout, "View 3D Mesh", &MainWindow::onViewMeshButtonClick);
 
-    monster m;
-    std::vector<Region> regions = m_canvas->getRegions();
+    m_toggleMeshButton = new QPushButton("Build && View 3D Mesh");
+    brushLayout->addWidget(m_toggleMeshButton);
+    connect(m_toggleMeshButton, &QPushButton::clicked,
+            this, &MainWindow::onToggleMeshViewClick);
 }
 
 void MainWindow::addPushButton(QBoxLayout *layout, QString text,
@@ -99,49 +114,40 @@ void MainWindow::onSaveButtonClick() {
     m_canvas->saveImageToFile(file);
 }
 
-void MainWindow::onBuildMeshButtonClick() {
+QString MainWindow::buildMeshAndSaveObj() {
     monster m;
     StitchedMesh mesh = m.buildMesh(
         m_canvas->getRegions(),
         m_canvas->getAllConnectedRegions()
         );
     // monster::buildMesh currently writes "mesh12.obj" in the cwd.
-    m_lastMeshPath = "mesh12.obj";
+    const QString path = "mesh12.obj";
+    if (!QFileInfo::exists(path)) {
+        std::cerr << "Build Mesh did not produce " << path.toStdString() << std::endl;
+        return {};
+    }
     std::cout << "Mesh written to: "
-              << QFileInfo(m_lastMeshPath).absoluteFilePath().toStdString()
+              << QFileInfo(path).absoluteFilePath().toStdString()
               << std::endl;
+    m_lastMeshPath = path;
+    return path;
 }
 
-void MainWindow::onViewMeshButtonClick() {
-    // Pick the OBJ to show: last built mesh if it exists, otherwise ask.
-    QString path = m_lastMeshPath;
-    if (path.isEmpty() || !QFileInfo::exists(path)) {
-        QString fallback = "mesh12.obj";
-        if (QFileInfo::exists(fallback)) {
-            path = fallback;
-        } else {
-            path = QFileDialog::getOpenFileName(
-                this, tr("Open OBJ Mesh"), QDir::currentPath(),
-                tr("Wavefront OBJ (*.obj)"));
-            if (path.isEmpty()) return;
-        }
+void MainWindow::onToggleMeshViewClick() {
+    const bool showingMesh = (m_viewStack->currentIndex() == m_meshPageIndex);
+
+    if (showingMesh) {
+        m_viewStack->setCurrentIndex(m_canvasPageIndex);
+        m_toggleMeshButton->setText("Build && View 3D Mesh");
+        return;
     }
 
-    if (!m_meshViewerWindow) {
-        m_meshViewerWindow = new QWidget(nullptr); // top-level window
-        m_meshViewerWindow->setAttribute(Qt::WA_DeleteOnClose, false);
-        m_meshViewerWindow->setWindowTitle("3D Mesh Viewer");
-        m_meshViewerWindow->resize(800, 600);
-
-        QVBoxLayout *layout = new QVBoxLayout(m_meshViewerWindow);
-        layout->setContentsMargins(0, 0, 0, 0);
-
-        m_glWidget = new GLWidget(m_meshViewerWindow);
-        layout->addWidget(m_glWidget);
-    }
+    // Always (re)build from the current canvas state, then display the OBJ.
+    QString path = buildMeshAndSaveObj();
+    if (path.isEmpty()) return;
 
     m_glWidget->setMeshPath(path.toStdString());
-    m_meshViewerWindow->show();
-    m_meshViewerWindow->raise();
-    m_meshViewerWindow->activateWindow();
+    m_viewStack->setCurrentIndex(m_meshPageIndex);
+    m_glWidget->setFocus();
+    m_toggleMeshButton->setText("Back to 2D Canvas");
 }

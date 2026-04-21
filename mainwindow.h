@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QBoxLayout>
+#include <QStackedWidget>
 #include <QPointer>
 
 #include "canvas2d.h"
@@ -32,14 +33,19 @@ private slots:
     void onRevertButtonClick();
     void onUploadButtonClick();
     void onSaveButtonClick();
-    void onBuildMeshButtonClick();
-    void onViewMeshButtonClick();
+    void onToggleMeshViewClick();
 
 private:
-    // Path to the most recently generated OBJ file (relative to cwd).
-    QString m_lastMeshPath;
-    // Viewer window spawned by "View 3D Mesh"; null until first use.
-    QPointer<QWidget> m_meshViewerWindow;
-    QPointer<GLWidget> m_glWidget;
+    // Runs the mesh inflation pipeline; returns the path to the written OBJ,
+    // or an empty string on failure.
+    QString buildMeshAndSaveObj();
+
+private:
+    QString          m_lastMeshPath;
+    QStackedWidget  *m_viewStack;
+    int              m_canvasPageIndex;
+    int              m_meshPageIndex;
+    QPushButton     *m_toggleMeshButton;
+    GLWidget        *m_glWidget;
 };
 #endif // MAINWINDOW_H
