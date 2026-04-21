@@ -96,8 +96,7 @@ void MainWindow::onSaveButtonClick() {
 
 void MainWindow::onBuildMeshButtonClick() {
     monster m;
-    StitchedMesh mesh = m.buildMesh(
-        m_canvas->getRegions(),
-        m_canvas->getAllConnectedRegions()
-        );
+    std::vector<Region> regions = m_canvas->getRegions();
+    StitchedMesh mesh = m.buildMesh(m_canvas->getRegions());
+
 }
