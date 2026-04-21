@@ -53,6 +53,13 @@ MainWindow::MainWindow()
     std::vector<Region> regions = m_canvas->getRegions();
 }
 
+void MainWindow::addPushButton(QBoxLayout *layout, QString text,
+                               void (MainWindow::*slot)()) {
+    QPushButton *button = new QPushButton(text);
+    layout->addWidget(button);
+    connect(button, &QPushButton::clicked, this, slot);
+}
+
 void MainWindow::setupCanvas2D() {
     m_canvas = new Canvas2D();
     m_canvas->init();
@@ -60,12 +67,6 @@ void MainWindow::setupCanvas2D() {
     if (!settings.imagePath.isEmpty()) {
         m_canvas->loadImageFromFile(settings.imagePath);
     }
-}
-
-void MainWindow::addPushButton(QBoxLayout *layout, QString text, auto function) {
-    QPushButton *button = new QPushButton(text);
-    layout->addWidget(button);
-    connect(button, &QPushButton::clicked, this, function);
 }
 
 void MainWindow::onClearButtonClick() {

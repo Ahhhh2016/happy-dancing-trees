@@ -10,6 +10,7 @@
 #include <QBoxLayout>
 
 #include "canvas2d.h"
+#include "glwidget.h"
 
 class MainWindow : public QWidget
 {
@@ -22,7 +23,8 @@ private:
     void setupCanvas2D();
     Canvas2D *m_canvas;
 
-    void addPushButton(QBoxLayout *layout, QString text, auto function);
+    void addPushButton(QBoxLayout *layout, QString text,
+                       void (MainWindow::*slot)());
 
 private slots:
     void onClearButtonClick();
@@ -30,5 +32,8 @@ private slots:
     void onUploadButtonClick();
     void onSaveButtonClick();
     void onBuildMeshButtonClick();
+
+private:
+    GLWidget *glWidget;
 };
 #endif // MAINWINDOW_H
