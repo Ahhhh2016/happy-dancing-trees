@@ -56,6 +56,8 @@ add_executable(${PROJECT_NAME}
 
   util/tiny_obj_loader.h
   util/unsupportedeigenthing/OpenGLSupport
+
+  resources/shaders/shaders.qrc
 )
 
 # GLEW: this creates its library and allows you to `#include "GL/glew.h"`
@@ -86,6 +88,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libigl)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+  StaticGLEW
   Qt::Core
   Qt::Widgets
   Qt::Gui
@@ -94,6 +97,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   igl::core
   # CDT::CDT
 )
+
+# GLEW on macOS needs to link against the system OpenGL framework.
+if (APPLE)
+  find_package(OpenGL REQUIRED)
+  target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::GL)
+endif()
 
 # This allows you to `#include "Eigen/..."`
 target_include_directories(${PROJECT_NAME} PRIVATE

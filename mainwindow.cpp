@@ -5,9 +5,12 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QDir>
 #include <QLabel>
 #include <QGroupBox>
 #include <QScrollArea>
+#include <QMessageBox>
 #include <iostream>
 
 MainWindow::MainWindow()
@@ -48,6 +51,7 @@ MainWindow::MainWindow()
     addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
     addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
     addPushButton(brushLayout, "Build Mesh", &MainWindow::onBuildMeshButtonClick);
+    addPushButton(brushLayout, "View 3D Mesh", &MainWindow::onViewMeshButtonClick);
 
     monster m;
     std::vector<Region> regions = m_canvas->getRegions();
@@ -101,4 +105,43 @@ void MainWindow::onBuildMeshButtonClick() {
         m_canvas->getRegions(),
         m_canvas->getAllConnectedRegions()
         );
+    // monster::buildMesh currently writes "mesh12.obj" in the cwd.
+    m_lastMeshPath = "mesh12.obj";
+    std::cout << "Mesh written to: "
+              << QFileInfo(m_lastMeshPath).absoluteFilePath().toStdString()
+              << std::endl;
+}
+
+void MainWindow::onViewMeshButtonClick() {
+    // Pick the OBJ to show: last built mesh if it exists, otherwise ask.
+    QString path = m_lastMeshPath;
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        QString fallback = "mesh12.obj";
+        if (QFileInfo::exists(fallback)) {
+            path = fallback;
+        } else {
+            path = QFileDialog::getOpenFileName(
+                this, tr("Open OBJ Mesh"), QDir::currentPath(),
+                tr("Wavefront OBJ (*.obj)"));
+            if (path.isEmpty()) return;
+        }
+    }
+
+    if (!m_meshViewerWindow) {
+        m_meshViewerWindow = new QWidget(nullptr); // top-level window
+        m_meshViewerWindow->setAttribute(Qt::WA_DeleteOnClose, false);
+        m_meshViewerWindow->setWindowTitle("3D Mesh Viewer");
+        m_meshViewerWindow->resize(800, 600);
+
+        QVBoxLayout *layout = new QVBoxLayout(m_meshViewerWindow);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        m_glWidget = new GLWidget(m_meshViewerWindow);
+        layout->addWidget(m_glWidget);
+    }
+
+    m_glWidget->setMeshPath(path.toStdString());
+    m_meshViewerWindow->show();
+    m_meshViewerWindow->raise();
+    m_meshViewerWindow->activateWindow();
 }

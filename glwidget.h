@@ -6,12 +6,14 @@
 
 #include "graphics/camera.h"
 #include "graphics/shader.h"
+#include "graphics/shape.h"
 
 #include <QOpenGLWidget>
 #include <QElapsedTimer>
 #include <QPointF>
 #include <QTimer>
 #include <memory>
+#include <string>
 
 class GLWidget : public QOpenGLWidget
 {
@@ -20,6 +22,9 @@ class GLWidget : public QOpenGLWidget
 public:
     GLWidget(QWidget *parent = nullptr);
     ~GLWidget();
+
+    // Queue an OBJ to display. If GL is already initialized, loads immediately.
+    void setMeshPath(const std::string &path);
 
 private:
     static const int FRAMES_TO_AVERAGE = 30;
@@ -39,7 +44,7 @@ private:
     void keyReleaseEvent  (QKeyEvent   *event) override;
 
 private:
-    void screenPointToRay(const QPointF &screenPos, Eigen::Vector3f &rayOrigin, Eigen::Vector3f &rayDir);
+    void loadMeshFromFile(const std::string &path);
 
 private:
     QElapsedTimer m_deltaTimeProvider; // For measuring elapsed time
@@ -47,6 +52,12 @@ private:
 
     Camera     m_camera;
     Shader    *m_shader;
+
+    Shape       m_mesh;
+    bool        m_meshLoaded;
+    bool        m_glInitialized;
+    bool        m_wireframe;
+    std::string m_pendingMeshPath;
 
     int m_forward;
     int m_sideways;
@@ -56,7 +67,6 @@ private:
     int m_lastY;
 
     bool m_rotateCapture;
-    bool m_dragCapture;
 
 private slots:
 

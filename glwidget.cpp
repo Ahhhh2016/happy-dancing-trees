@@ -1,7 +1,10 @@
 #include "glwidget.h"
 
+#include "util/tiny_obj_loader.h"
+
 #include <QApplication>
 #include <QKeyEvent>
+#include <QFileInfo>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -15,33 +18,40 @@ GLWidget::GLWidget(QWidget *parent) :
     QOpenGLWidget(parent),
     m_deltaTimeProvider(),
     m_intervalTimer(),
-    m_sim(),
     m_camera(),
-    m_shader(),
+    m_shader(nullptr),
+    m_mesh(),
+    m_meshLoaded(false),
+    m_glInitialized(false),
+    m_wireframe(false),
+    m_pendingMeshPath(),
     m_forward(),
     m_sideways(),
     m_vertical(),
     m_lastX(),
     m_lastY(),
-    m_rotateCapture(false),
-    m_dragCapture(false)
+    m_rotateCapture(false)
 {
-    // GLWidget needs all mouse move events, not just mouse drag events
     setMouseTracking(true);
-
-    // Hide the cursor since this is a fullscreen app
     QApplication::setOverrideCursor(Qt::ArrowCursor);
-
-    // GLWidget needs keyboard focus
     setFocusPolicy(Qt::StrongFocus);
-
-    // Function tick() will be called once per interva
     connect(&m_intervalTimer, SIGNAL(timeout()), this, SLOT(tick()));
 }
 
 GLWidget::~GLWidget()
 {
     if (m_shader != nullptr) delete m_shader;
+}
+
+void GLWidget::setMeshPath(const std::string &path)
+{
+    m_pendingMeshPath = path;
+    if (m_glInitialized) {
+        makeCurrent();
+        loadMeshFromFile(path);
+        doneCurrent();
+        update();
+    }
 }
 
 // ================== Basic OpenGL Overrides
@@ -62,9 +72,8 @@ void GLWidget::initializeGL()
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    // Initialize the shader and simulation
+    // Initialize the shader
     m_shader = new Shader(":/resources/shaders/shader.vert", ":/resources/shaders/shader.frag");
-    m_sim.init();
 
     // Initialize camera with a reasonable transform
     Eigen::Vector3f eye    = {0, 2, -5};
@@ -75,39 +84,105 @@ void GLWidget::initializeGL()
 
     m_deltaTimeProvider.start();
     m_intervalTimer.start(1000 / 60);
+
+    m_glInitialized = true;
+    if (!m_pendingMeshPath.empty() && !m_meshLoaded) {
+        loadMeshFromFile(m_pendingMeshPath);
+    }
 }
 
 void GLWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    m_shader->bind();
-    m_shader->setUniform("proj", m_camera.getProjection());
-    m_shader->setUniform("view", m_camera.getView());
-    m_sim.draw(m_shader);
-    m_shader->unbind();
+    if (m_meshLoaded && m_shader != nullptr) {
+        // Toggle wireframe via polygon mode so it works for any mesh,
+        // not just those with tet indices.
+        glPolygonMode(GL_FRONT_AND_BACK, m_wireframe ? GL_LINE : GL_FILL);
+        m_shader->bind();
+        m_shader->setUniform("proj", m_camera.getProjection());
+        m_shader->setUniform("view", m_camera.getView());
+        m_mesh.draw(m_shader);
+        m_shader->unbind();
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
 }
 
 void GLWidget::resizeGL(int w, int h)
 {
     glViewport(0, 0, w, h);
-    m_camera.setAspect(static_cast<float>(w) / h);
+    m_camera.setAspect(static_cast<float>(w) / std::max(h, 1));
 }
 
-void GLWidget::screenPointToRay(const QPointF &screenPos, Eigen::Vector3f &rayOrigin, Eigen::Vector3f &rayDir)
+void GLWidget::loadMeshFromFile(const std::string &path)
 {
-    const float widgetWidth = static_cast<float>(std::max(width(), 1));
-    const float widgetHeight = static_cast<float>(std::max(height(), 1));
-    const float ndcX = 2.0f * static_cast<float>(screenPos.x()) / widgetWidth - 1.0f;
-    const float ndcY = 1.0f - 2.0f * static_cast<float>(screenPos.y()) / widgetHeight;
-
-    const Eigen::Matrix4f invViewProj = (m_camera.getProjection() * m_camera.getView()).inverse();
-    Eigen::Vector4f farWorld = invViewProj * Eigen::Vector4f(ndcX, ndcY, 1.0f, 1.0f);
-    if (std::abs(farWorld.w()) > 1e-6f) {
-        farWorld /= farWorld.w();
+    if (!QFileInfo::exists(QString::fromStdString(path))) {
+        std::cerr << "OBJ file not found: " << path << std::endl;
+        return;
     }
 
-    rayOrigin = m_camera.getPosition();
-    rayDir = (farWorld.head<3>() - rayOrigin).normalized();
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string err;
+    // Older tinyobjloader API: (attrib, shapes, materials, err, filename, ...)
+    bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, path.c_str(),
+                               /*mtl_basedir=*/nullptr, /*triangulate=*/true);
+    if (!err.empty()) std::cerr << "tinyobj: " << err << std::endl;
+    if (!ok) {
+        std::cerr << "Failed to load OBJ: " << path << std::endl;
+        return;
+    }
+
+    std::vector<Eigen::Vector3d> vertices;
+    vertices.reserve(attrib.vertices.size() / 3);
+    for (size_t i = 0; i + 2 < attrib.vertices.size(); i += 3) {
+        vertices.emplace_back(attrib.vertices[i + 0],
+                              attrib.vertices[i + 1],
+                              attrib.vertices[i + 2]);
+    }
+
+    std::vector<Eigen::Vector3i> triangles;
+    for (const auto &shape : shapes) {
+        size_t index_offset = 0;
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+            int fv = shape.mesh.num_face_vertices[f];
+            if (fv < 3) { index_offset += fv; continue; }
+
+            int i0 = shape.mesh.indices[index_offset + 0].vertex_index;
+            for (int k = 1; k + 1 < fv; ++k) {
+                int i1 = shape.mesh.indices[index_offset + k].vertex_index;
+                int i2 = shape.mesh.indices[index_offset + k + 1].vertex_index;
+                triangles.emplace_back(i0, i1, i2);
+            }
+            index_offset += fv;
+        }
+    }
+
+    if (vertices.empty() || triangles.empty()) {
+        std::cerr << "OBJ has no mesh data: " << path << std::endl;
+        return;
+    }
+
+    // Center and normalize scale so the mesh fits a unit-ish view.
+    Eigen::Vector3d mn = vertices.front();
+    Eigen::Vector3d mx = vertices.front();
+    for (const auto &v : vertices) {
+        mn = mn.cwiseMin(v);
+        mx = mx.cwiseMax(v);
+    }
+    const Eigen::Vector3d center = 0.5 * (mn + mx);
+    const double diag = (mx - mn).norm();
+    const double scale = (diag > 1e-8) ? (2.0 / diag) : 1.0;
+    for (auto &v : vertices) {
+        v = (v - center) * scale;
+    }
+
+    m_mesh.init(vertices, triangles);
+    m_meshLoaded = true;
+
+    std::cout << "Loaded OBJ: " << path
+              << "  verts=" << vertices.size()
+              << "  tris="  << triangles.size() << std::endl;
 }
 
 // ================== Event Listeners
@@ -119,13 +194,6 @@ void GLWidget::mousePressEvent(QMouseEvent *event)
 
     if (event->button() == Qt::LeftButton) {
         m_rotateCapture = true;
-    }
-
-    if (event->button() == Qt::RightButton) {
-        Eigen::Vector3f rayOrigin;
-        Eigen::Vector3f rayDir;
-        screenPointToRay(event->position(), rayOrigin, rayDir);
-        m_dragCapture = m_sim.beginDrag(rayOrigin, rayDir);
     }
 }
 
@@ -142,13 +210,6 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
                         -deltaX * ROTATE_SPEED);
     }
 
-    if (m_dragCapture) {
-        Eigen::Vector3f rayOrigin;
-        Eigen::Vector3f rayDir;
-        screenPointToRay(event->position(), rayOrigin, rayDir);
-        m_sim.updateDrag(rayOrigin, rayDir);
-    }
-
     m_lastX = currX;
     m_lastY = currY;
 }
@@ -157,11 +218,6 @@ void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         m_rotateCapture = false;
-    }
-
-    if (event->button() == Qt::RightButton) {
-        m_dragCapture = false;
-        m_sim.endDrag();
     }
 }
 
@@ -184,9 +240,8 @@ void GLWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_F: m_vertical -= SPEED; break;
     case Qt::Key_R: m_vertical += SPEED; break;
     case Qt::Key_C: m_camera.toggleIsOrbiting(); break;
-    case Qt::Key_T: m_sim.toggleWire(); break;
-    case Qt::Key_O: m_sim.toggleObstacleSphere(); break;
-    case Qt::Key_Escape: QApplication::quit();
+    case Qt::Key_T: m_wireframe = !m_wireframe; update(); break;
+    case Qt::Key_Escape: close(); break;
     }
 }
 
@@ -210,14 +265,14 @@ void GLWidget::keyReleaseEvent(QKeyEvent *event)
 void GLWidget::tick()
 {
     float deltaSeconds = m_deltaTimeProvider.restart() / 1000.f;
-    m_sim.update(deltaSeconds);
 
-    // Move camera
     auto look = m_camera.getLook();
     look.y() = 0;
-    look.normalize();
+    if (look.squaredNorm() > 1e-8f) look.normalize();
     Eigen::Vector3f perp(-look.z(), 0, look.x());
-    Eigen::Vector3f moveVec = m_forward * look.normalized() + m_sideways * perp.normalized() + m_vertical * Eigen::Vector3f::UnitY();
+    Eigen::Vector3f moveVec = m_forward * look
+                            + m_sideways * perp
+                            + m_vertical * Eigen::Vector3f::UnitY();
     moveVec *= deltaSeconds;
     m_camera.move(moveVec);
 
