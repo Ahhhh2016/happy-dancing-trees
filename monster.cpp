@@ -1,5 +1,6 @@
 #include "monster.h"
 #include <iostream>
+#include <limits>
 #include <igl/writeOBJ.h>
 #include <igl/remove_unreferenced.h>
 
@@ -117,7 +118,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions,
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
-        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
+        auto isDirichlet = buildIsDirichlet(V2, V, n);
 
         // build isMerging using nearest neighbor to bpPoints
         std::vector<bool> isMerging(V2.rows(), false);
@@ -514,6 +515,35 @@ void monster::triangulateRegions(
                 // they stay as false/false — handled separately via armpitPairs
                 break;
             }
+        }
+    }
+
+    // Host outer contour Dp: Dirichlet where the vertex lies on the closed
+    // host-boundary polyline. Bp interior stays excluded via isMerging; Bp
+    // endpoints lie on Dp and are Dirichlet like the rest of the silhouette.
+    auto distPointToSegment = [](const Eigen::Vector2d& p,
+                                  const Eigen::Vector2d& a,
+                                  const Eigen::Vector2d& b) -> double {
+        Eigen::Vector2d ab = b - a;
+        double denom = ab.squaredNorm();
+        if (denom < 1e-30) return (p - a).norm();
+        double t = (p - a).dot(ab) / denom;
+        t = std::max(0.0, std::min(1.0, t));
+        return (p - (a + t * ab)).norm();
+    };
+    if (nHost >= 3) {
+        for (int i = 0; i < nOut; i++) {
+            if (isMerging[i]) continue;
+            Eigen::Vector2d p = V2.row(i);
+            double best = std::numeric_limits<double>::infinity();
+            for (int j = 0; j < nHost; j++) {
+                Eigen::Vector2d a = hostBoundary[j].cast<double>();
+                Eigen::Vector2d b = hostBoundary[(j + 1) % nHost].cast<double>();
+                best = std::min(best, distPointToSegment(p, a, b));
+                if (best < kContourDirichletEps) break;
+            }
+            if (best < kContourDirichletEps)
+                isDirichlet[i] = true;
         }
     }
 
