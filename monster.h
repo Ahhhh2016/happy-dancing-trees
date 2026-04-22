@@ -7,6 +7,9 @@
 #define ANSI_DECLARATORS
 #define TRILIBRARY
 #include <igl/triangle/triangulate.h>
+#include <QImage>
+#include <QPainter>
+#include <QPainterPath>
 
 struct Stroke {
     std::vector<Eigen::Vector2f> points;
@@ -60,7 +63,14 @@ struct StitchedMesh {
 class monster {
 public:
     monster();
-    StitchedMesh buildMesh(const std::vector<Region>& regions);
+    StitchedMesh buildMesh(const std::vector<Region>& regions,
+                           const std::vector<std::vector<int>>& connectedRegions,
+                           int canvasWidth, int canvasHeight);
+
+    QImage renderRegionToMask(const Region& region, int width, int height);
+    std::vector<Eigen::Vector2f> traceBoundary(const QImage& mask);
+    std::vector<Eigen::Vector2f> findBpPixels(const QImage& hostMask,
+                                              const QImage& attachmentMask);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
     std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,

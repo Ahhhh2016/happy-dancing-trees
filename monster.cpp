@@ -2,94 +2,286 @@
 #include <iostream>
 #include <igl/writeOBJ.h>
 #include <igl/remove_unreferenced.h>
+#include <igl/boundary_loop.h>
+#include <QImage>
+#include <QPainter>
+#include <set>
 
 using namespace Eigen;
 using namespace std;
 
 monster::monster() {}
 
-StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
+StitchedMesh monster::buildMesh(const std::vector<Region>& regions,
+                                const std::vector<std::vector<int>>& connectedRegions,
+                                int canvasWidth, int canvasHeight) {
+    std::vector<int> hostIndices, attachmentIndices;
+    for (int i=0; i<(int)regions.size(); i++) {
+        bool hasMerging=false;
+        for (const Stroke& s : regions[i].boundaries)
+            if (s.isMergingBoundary) { hasMerging=true; break; }
+        if (hasMerging) attachmentIndices.push_back(i);
+        else hostIndices.push_back(i);
+    }
+    std::cout << "Host regions: " << hostIndices.size() << std::endl;
+    std::cout << "Attachment regions: " << attachmentIndices.size() << std::endl;
 
-    // Separate regions into hosts and attachments
-    std::vector<Region> hostRegions;
-    std::vector<Region> attachmentRegions;
-    for (const Region& region : regions) {
-        bool hasMergingBoundary = false;
-        for (const Stroke& stroke : region.boundaries) {
-            if (stroke.isMergingBoundary) { hasMergingBoundary = true; break; }
+    auto getComponent = [&](int regionIdx) -> std::vector<int> {
+        for (const auto& comp : connectedRegions)
+            for (int idx : comp)
+                if (idx==regionIdx) return comp;
+        return {};
+    };
+    auto getHostForAttachment = [&](int ai) -> int {
+        auto comp = getComponent(ai);
+        for (int idx : comp)
+            for (int hi : hostIndices)
+                if (idx==hi) return hi;
+        return -1;
+    };
+
+    auto downsample = [](const std::vector<Eigen::Vector2f>& pts, int maxPts) {
+        if ((int)pts.size() <= maxPts) return pts;
+        std::vector<Eigen::Vector2f> result;
+        float step = (float)(pts.size()-1)/(maxPts-1);
+        for (int i=0; i<maxPts; i++)
+            result.push_back(pts[(int)(i*step)]);
+        return result;
+    };
+
+    auto subtractMask = [](const QImage& host, const QImage& attachment) -> QImage {
+        QImage result = host;
+        for (int y=0; y<host.height(); y++)
+            for (int x=0; x<host.width(); x++)
+                if (qGray(attachment.pixel(x,y)) > 128)
+                    result.setPixel(x, y, qRgb(0,0,0));
+        return result;
+    };
+
+    auto findInteriorPoint = [](const QImage& mask) -> Eigen::Vector2d {
+        int w=mask.width(), h=mask.height();
+        double cx=0, cy=0; int count=0;
+        for (int y=0; y<h; y++)
+            for (int x=0; x<w; x++)
+                if (qGray(mask.pixel(x,y)) > 128) { cx+=x; cy+=y; count++; }
+        if (count>0) return {cx/count, cy/count};
+        return {-1,-1};
+    };
+
+    auto findAllBoundaryVerts = [](const Eigen::MatrixXi& F2, int nOut,
+                                   std::vector<bool>& isDirichlet) {
+        std::map<int,int> nextBnd;
+        for (int f=0; f<F2.rows(); f++) {
+            for (int k=0; k<3; k++) {
+                int a = F2(f,k), b = F2(f,(k+1)%3);
+                bool found = false;
+                for (int f2=0; f2<F2.rows() && !found; f2++)
+                    for (int k2=0; k2<3 && !found; k2++)
+                        if (F2(f2,k2)==b && F2(f2,(k2+1)%3)==a) found=true;
+                if (!found) nextBnd[a] = b;
+            }
         }
-        if (hasMergingBoundary) attachmentRegions.push_back(region);
-        else hostRegions.push_back(region);
-    }
-    std::cout << "Host regions: " << hostRegions.size() << std::endl;
-    std::cout << "Attachment regions: " << attachmentRegions.size() << std::endl;
+        std::set<int> visited;
+        for (auto& kv : nextBnd) {
+            if (visited.count(kv.first)) continue;
+            int start = kv.first, cur = start;
+            do {
+                isDirichlet[cur] = true;
+                visited.insert(cur);
+                cur = nextBnd[cur];
+            } while (cur != start && !visited.count(cur));
+        }
+    };
 
-    // Get Bp points from all attachment regions
-    std::vector<Eigen::Vector2f> bpPoints;
-    for (const Region& region : attachmentRegions) {
-        auto pts = getMergingBoundaryPoints(region);
-        bpPoints.insert(bpPoints.end(), pts.begin(), pts.end());
-    }
+    // render all masks
+    std::map<int,QImage> masks;
+    for (int i=0; i<(int)regions.size(); i++)
+        masks[i] = renderRegionToMask(regions[i], canvasWidth, canvasHeight);
 
-    // Step 1-4: Triangulate host regions with Bp inserted, then split along Bp
-    for (const Region& region : hostRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
-        Eigen::MatrixXi F2;
-        int n;
-        triangulateRegion(region, V, n, V2, F2, bpPoints);
-        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);
-        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
-        int overlap = 0;
-        for (int i = 0; i < V2.rows(); i++)
-            if (isDirichlet[i] && isMerging[i]) overlap++;
-        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
-        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
-        for (int idx : armpitIndices)
-            part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
+    // store hole boundaries so attachments use exactly the same points
+    std::map<int, std::vector<Eigen::Vector2f>> holeBoundaryByAttachment;
+
+    // triangulate host regions
+    for (int hi : hostIndices) {
+        const Region& host = regions[hi];
+        const QImage& hostMask = masks[hi];
+
+        std::vector<int> hostAttachmentIndices;
+        for (int ai : attachmentIndices)
+            if (getHostForAttachment(ai)==hi)
+                hostAttachmentIndices.push_back(ai);
+
+        // subtract all attachments from host mask to create holes
+        QImage hostWithHoles = hostMask;
+        for (int ai : hostAttachmentIndices)
+            hostWithHoles = subtractMask(hostWithHoles, masks[ai]);
+
+        // trace and downsample outer boundary
+        auto outerBoundary = downsample(traceBoundary(hostWithHoles), 300);
+        int nOuter = outerBoundary.size();
+        std::cout << "Host outer boundary: " << nOuter << " pts" << std::endl;
+        if (nOuter < 3) continue;
+
+        // trace hole boundaries — store for reuse by attachments
+        std::vector<std::vector<Eigen::Vector2f>> holeBoundaries;
+        std::vector<Eigen::Vector2d> holePoints;
+        for (int ai : hostAttachmentIndices) {
+            auto holeBoundary = downsample(traceBoundary(masks[ai]), 300);
+            std::cout << "Hole " << ai << " boundary: " << holeBoundary.size() << " pts" << std::endl;
+            if (holeBoundary.size() < 3) continue;
+            holeBoundaryByAttachment[ai] = holeBoundary; // store for attachment loop
+            holeBoundaries.push_back(holeBoundary);
+            holePoints.push_back(findInteriorPoint(masks[ai]));
+        }
+
+        // build V: outer boundary + hole boundaries
+        int totalVerts = nOuter;
+        for (auto& hb : holeBoundaries) totalVerts += hb.size();
+        Eigen::MatrixXd V(totalVerts, 2);
+        for (int i=0; i<nOuter; i++) {
+            V(i,0)=outerBoundary[i].x();
+            V(i,1)=outerBoundary[i].y();
+        }
+        int offset = nOuter;
+        for (auto& hb : holeBoundaries) {
+            for (int i=0; i<(int)hb.size(); i++) {
+                V(offset+i,0)=hb[i].x();
+                V(offset+i,1)=hb[i].y();
+            }
+            offset += hb.size();
+        }
+
+        // build E: outer loop + hole loops
+        std::vector<Eigen::Vector2i> edges;
+        for (int i=0; i<nOuter-1; i++) edges.push_back({i,i+1});
+        edges.push_back({nOuter-1,0});
+        offset = nOuter;
+        for (auto& hb : holeBoundaries) {
+            int n = hb.size();
+            for (int i=0; i<n-1; i++) edges.push_back({offset+i, offset+i+1});
+            edges.push_back({offset+n-1, offset});
+            offset += n;
+        }
+
+        Eigen::MatrixXi E(edges.size(), 2);
+        for (int i=0; i<(int)edges.size(); i++) { E(i,0)=edges[i].x(); E(i,1)=edges[i].y(); }
+
+        // H: one point inside each hole
+        Eigen::MatrixXd H(holePoints.size(), 2);
+        for (int i=0; i<(int)holePoints.size(); i++) {
+            H(i,0)=holePoints[i].x();
+            H(i,1)=holePoints[i].y();
+        }
+
+        Eigen::MatrixXd V2; Eigen::MatrixXi F2;
+        std::cout << "Triangulating host: V=" << V.rows() << " E=" << E.rows() << " H=" << H.rows() << std::endl;
+        igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
+        std::cout << "Host done: " << V2.rows() << " verts" << std::endl;
+
+        int nOut = V2.rows();
+        std::vector<bool> isDirichlet(nOut,false), isMerging(nOut,false);
+        std::vector<std::pair<int,int>> armpitPairs;
+
+        // Dirichlet = all boundary vertices
+        findAllBoundaryVerts(F2, nOut, isDirichlet);
+
+        // isMerging = Bp pixels, overrides Dirichlet
+        for (int hi2=0; hi2<(int)holeBoundaries.size(); hi2++) {
+            int ai = hostAttachmentIndices[hi2];
+            auto bpPixels = findBpPixels(hostMask, masks[ai]);
+            auto rawBp = getMergingBoundaryPoints(regions[ai]);
+            Eigen::Vector2f bp0(round(rawBp.front().x()), round(rawBp.front().y()));
+            Eigen::Vector2f bp1(round(rawBp.back().x()), round(rawBp.back().y()));
+
+            for (int i=0; i<nOut; i++) {
+                Eigen::Vector2d p = V2.row(i);
+                for (auto& bp : bpPixels) {
+                    double dx=p.x()-bp.x(), dy=p.y()-bp.y();
+                    if (dx*dx+dy*dy<0.25) { isMerging[i]=true; isDirichlet[i]=false; break; }
+                }
+                Eigen::Vector2f pf(V2(i,0),V2(i,1));
+                if ((pf-bp0).norm()<1.0f || (pf-bp1).norm()<1.0f) {
+                    isDirichlet[i]=true; isMerging[i]=false;
+                    armpitPairs.push_back({i, i+nOut});
+                }
+            }
+        }
+
+        MeshPart part = createFrontBack(V2, F2, isDirichlet, host.depthOrder, isMerging);
+        for (auto& ap : armpitPairs) part.armpitPairs.push_back(ap);
         m_meshParts.push_back(part);
-
-        std::cout << "Host n (boundary input points): " << n << std::endl;
-        std::cout << "Host V2 total: " << V2.rows() << std::endl;
-
-        int mCount = 0;
-        for (bool b : isMerging) if (b) mCount++;
-        std::cout << "Merging verts host: " << mCount << " / " << V2.rows() << std::endl;
     }
 
+    // triangulate attachment regions
+    for (int ai : attachmentIndices) {
+        const Region& region = regions[ai];
 
-    // Step 5-6: Triangulate attachment regions
-    for (const Region& region : attachmentRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
-        Eigen::MatrixXi F2;
-        int n;
-        triangulateRegion(region, V, n, V2, F2);
-        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);  // add this
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
-        int overlap = 0;
-        for (int i = 0; i < V2.rows(); i++)
-            if (isDirichlet[i] && isMerging[i]) overlap++;
-        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
-        m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
+        // use the same boundary that the host used for this hole
+        std::vector<Eigen::Vector2f> boundary;
+        if (holeBoundaryByAttachment.count(ai))
+            boundary = holeBoundaryByAttachment[ai];
+        else
+            boundary = downsample(traceBoundary(masks[ai]), 300);
 
-        std::cout << "Attachment n (boundary input points): " << n << std::endl;
-        std::cout << "Attachment V2 total: " << V2.rows() << std::endl;
+        int nBoundary = boundary.size();
+        std::cout << "Attachment " << ai << " boundary: " << nBoundary << " pts" << std::endl;
+        if (nBoundary < 3) continue;
 
-        int mCount = 0;
-        for (bool b : isMerging) if (b) mCount++;
-        std::cout << "Merging verts attachment: " << mCount << " / " << V2.rows() << std::endl;
+        Eigen::MatrixXd V(nBoundary, 2);
+        for (int i=0; i<nBoundary; i++) { V(i,0)=boundary[i].x(); V(i,1)=boundary[i].y(); }
+
+        std::vector<Eigen::Vector2i> edges;
+        for (int i=0; i<nBoundary-1; i++) edges.push_back({i,i+1});
+        edges.push_back({nBoundary-1,0});
+
+        Eigen::MatrixXi E(edges.size(), 2);
+        for (int i=0; i<(int)edges.size(); i++) { E(i,0)=edges[i].x(); E(i,1)=edges[i].y(); }
+        Eigen::MatrixXd V2; Eigen::MatrixXi F2; Eigen::MatrixXd H(0,2);
+
+        std::cout << "Triangulating attachment " << ai << ": V=" << V.rows() << " E=" << E.rows() << std::endl;
+        igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
+        std::cout << "Attachment " << ai << " done: " << V2.rows() << " verts" << std::endl;
+
+        int nOut = V2.rows();
+        std::vector<bool> isDirichlet(nOut,false), isMerging(nOut,false);
+
+        // Dirichlet = all boundary vertices
+        findAllBoundaryVerts(F2, nOut, isDirichlet);
+
+        // isMerging = Bp pixels shared with host
+        int hi = getHostForAttachment(ai);
+        std::vector<Eigen::Vector2f> bpPixels;
+        if (hi >= 0)
+            bpPixels = findBpPixels(masks[hi], masks[ai]);
+
+        for (int i=0; i<nOut; i++) {
+            Eigen::Vector2d p = V2.row(i);
+            for (auto& bp : bpPixels) {
+                double dx=p.x()-bp.x(), dy=p.y()-bp.y();
+                if (dx*dx+dy*dy<0.25) { isMerging[i]=true; isDirichlet[i]=false; break; }
+            }
+        }
+
+        auto rawBp = getMergingBoundaryPoints(region);
+        Eigen::Vector2f bp0(round(rawBp.front().x()), round(rawBp.front().y()));
+        Eigen::Vector2f bp1(round(rawBp.back().x()), round(rawBp.back().y()));
+
+        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
+
+        for (int i=0; i<nOut; i++) {
+            Eigen::Vector2f p(V2(i,0),V2(i,1));
+            if ((p-bp0).norm()<1.0f || (p-bp1).norm()<1.0f) {
+                isDirichlet[i]=true; isMerging[i]=false;
+                part.armpitPairs.push_back({i, i+nOut});
+            }
+        }
+        m_meshParts.push_back(part);
     }
 
-    // Step 7: Concatenate all MeshParts into one global StitchedMesh
-    // TODO: inter-region stitching along Bp (connect body and limb meshes)
     StitchedMesh result = stitchParts();
-
     Eigen::MatrixXd V3D(result.V.rows(), 3);
     V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
     igl::writeOBJ("mesh12.obj", V3D, result.F);
-
     return result;
 }
 
@@ -359,7 +551,7 @@ StitchedMesh monster::stitchParts() {
 }
 
 void monster::weldSeams(StitchedMesh& mesh) {
-    const double WELD_EPS = 1e-6;
+    const double WELD_EPS = 0.5;
     const int n = mesh.V.rows();
 
     std::vector<int> remap(n);
@@ -409,6 +601,21 @@ void monster::weldSeams(StitchedMesh& mesh) {
 
 
     }
+
+    int pass1Count = 0, pass2Count = 0;
+    for (int i = 0; i < n; i++) {
+        if (remap[i] != i) {
+            if (mesh.isMerging[i]) pass1Count++;
+            else pass2Count++;
+        }
+    }
+    std::cout << "Pass 1 welded: " << pass1Count << std::endl;
+    std::cout << "Pass 2 welded: " << pass2Count << std::endl;
+
+    int dirichletCount = 0;
+    for (int i = 0; i < n; i++)
+        if (mesh.isDirichlet[i] && !mesh.isMerging[i]) dirichletCount++;
+    std::cout << "Dirichlet verts (should weld): " << dirichletCount << std::endl;
 
     // Apply remap to F
     for (int f = 0; f < mesh.F.rows(); f++)
@@ -475,4 +682,92 @@ std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
     for (bool b : isDirichlet) if (b) dCount++;
     std::cout << "Dirichlet verts: " << dCount << " / " << V2.rows() << std::endl;
     return isDirichlet;
+}
+
+QImage monster::renderRegionToMask(const Region& region, int width, int height) {
+    QImage mask(width, height, QImage::Format_Grayscale8);
+    mask.fill(0);
+    QPainter painter(&mask);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    const Stroke& stroke = region.boundaries.front();
+    QPainterPath fillPath;
+    fillPath.moveTo(stroke.points.front().x(), stroke.points.front().y());
+    for (std::size_t i = 1; i < stroke.points.size(); ++i)
+        fillPath.lineTo(stroke.points[i].x(), stroke.points[i].y());
+    fillPath.closeSubpath();
+    painter.fillPath(fillPath, Qt::white);
+    painter.end();
+    return mask;
+}
+
+std::vector<Eigen::Vector2f> monster::traceBoundary(const QImage& mask) {
+    int w = mask.width(), h = mask.height();
+
+    auto isWhite = [&](int x, int y) -> bool {
+        if (x<0||y<0||x>=w||y>=h) return false;
+        return qGray(mask.pixel(x,y)) > 128;
+    };
+    auto isBoundary = [&](int x, int y) -> bool {
+        if (!isWhite(x,y)) return false;
+        if (x==0||y==0||x==w-1||y==h-1) return true;
+        for (int dy=-1; dy<=1; dy++)
+            for (int dx=-1; dx<=1; dx++)
+                if ((dx||dy) && !isWhite(x+dx,y+dy)) return true;
+        return false;
+    };
+
+    // find start pixel
+    int startX=-1, startY=-1;
+    for (int y=0; y<h && startX<0; y++)
+        for (int x=0; x<w && startX<0; x++)
+            if (isBoundary(x,y)) { startX=x; startY=y; }
+
+    if (startX < 0) return {};
+
+    const int dx[] = {1,1,0,-1,-1,-1,0,1};
+    const int dy[] = {0,1,1,1,0,-1,-1,-1};
+
+    std::vector<Eigen::Vector2f> boundary;
+    std::set<std::pair<int,int>> visited;
+    int cx=startX, cy=startY, prevDir=0;
+    do {
+        if (visited.count({cx,cy})) break;
+        visited.insert({cx,cy});
+        boundary.push_back({(float)cx,(float)cy});
+        bool found=false;
+        for (int i=0; i<8; i++) {
+            int dir=(prevDir+i)%8;
+            int nx=cx+dx[dir], ny=cy+dy[dir];
+            if (isBoundary(nx,ny) && !visited.count({nx,ny})) {
+                prevDir=(dir+6)%8;
+                cx=nx; cy=ny;
+                found=true; break;
+            }
+        }
+        if (!found) break;
+    } while (cx!=startX||cy!=startY);
+
+    return boundary;
+}
+
+std::vector<Eigen::Vector2f> monster::findBpPixels(
+    const QImage& hostMask, const QImage& attachmentMask) {
+    std::vector<Eigen::Vector2f> bp;
+    int w=hostMask.width(), h=hostMask.height();
+    auto isWhite=[](const QImage& img, int x, int y) -> bool {
+        return qGray(img.pixel(x,y)) > 128;
+    };
+    for (int y=1; y<h-1; y++) {
+        for (int x=1; x<w-1; x++) {
+            if (!isWhite(attachmentMask,x,y)) continue;
+            if (!isWhite(hostMask,x,y)) continue;
+            bool onBoundary=false;
+            for (int dy=-1; dy<=1&&!onBoundary; dy++)
+                for (int dx=-1; dx<=1&&!onBoundary; dx++)
+                    if ((dx||dy)&&!isWhite(attachmentMask,x+dx,y+dy))
+                        onBoundary=true;
+            if (onBoundary) bp.push_back({(float)x,(float)y});
+        }
+    }
+    return bp;
 }
