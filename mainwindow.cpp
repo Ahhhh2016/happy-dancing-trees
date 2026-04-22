@@ -117,8 +117,7 @@ void MainWindow::onSaveButtonClick() {
 QString MainWindow::buildMeshAndSaveObj() {
     monster m;
     StitchedMesh mesh = m.buildMesh(
-        m_canvas->getRegions(),
-        m_canvas->getAllConnectedRegions()
+        m_canvas->getRegions()
         );
     // monster::buildMesh currently writes "mesh12.obj" in the cwd.
     const QString path = "mesh12.obj";
