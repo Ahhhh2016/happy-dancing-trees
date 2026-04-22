@@ -16,6 +16,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Core)
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
+find_package(Qt6 REQUIRED COMPONENTS OpenGL)
+find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
 
 # Specifies required Qt components
 add_definitions(-D_USE_MATH_DEFINES)
@@ -36,7 +38,31 @@ add_executable(${PROJECT_NAME}
   rgba.h
   monster.h monster.cpp
   triangle.c
+
+
+  glwidget.cpp
+  graphics/camera.cpp
+  graphics/graphicsdebug.cpp
+  graphics/meshloader.cpp
+  graphics/shader.cpp
+  graphics/shape.cpp
+
+  glwidget.h
+  graphics/camera.h
+  graphics/graphicsdebug.h
+  graphics/meshloader.h
+  graphics/shader.h
+  graphics/shape.h
+
+  util/tiny_obj_loader.h
+  util/unsupportedeigenthing/OpenGLSupport
+
+  resources/shaders/shaders.qrc
 )
+
+# GLEW: this creates its library and allows you to `#include "GL/glew.h"`
+add_library(StaticGLEW STATIC glew/src/glew.c)
+include_directories(${PROJECT_NAME} PRIVATE glew/include)
 
 set_source_files_properties(triangle.c PROPERTIES
     LANGUAGE C
@@ -45,6 +71,14 @@ set_source_files_properties(triangle.c PROPERTIES
 # Specifies libraries to be linked (Qt components, glew, etc)
 
 include(FetchContent)
+
+# libigl still uses the deprecated FetchContent_Populate() API internally.
+# Silence the CMake 3.30 deprecation warning by forcing OLD behavior for CMP0169.
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+    set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
+endif()
+
 FetchContent_Declare(
     libigl
     GIT_REPOSITORY https://github.com/libigl/libigl.git
@@ -54,12 +88,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libigl)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+  StaticGLEW
   Qt::Core
   Qt::Widgets
   Qt::Gui
+  Qt::OpenGL
+  Qt::OpenGLWidgets
   igl::core
   # CDT::CDT
 )
+
+# GLEW on macOS needs to link against the system OpenGL framework.
+if (APPLE)
+  find_package(OpenGL REQUIRED)
+  target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::GL)
+endif()
 
 # This allows you to `#include "Eigen/..."`
 target_include_directories(${PROJECT_NAME} PRIVATE

@@ -1,5 +1,6 @@
 #include "monster.h"
 #include <iostream>
+#include <limits>
 #include <igl/writeOBJ.h>
 #include <igl/remove_unreferenced.h>
 
@@ -38,6 +39,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
+<<<<<<< HEAD
         std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);
         auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
         auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
@@ -45,6 +47,34 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         for (int i = 0; i < V2.rows(); i++)
             if (isDirichlet[i] && isMerging[i]) overlap++;
         std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+=======
+        auto isDirichlet = buildIsDirichlet(V2, V, n);
+
+        // build isMerging using nearest neighbor to bpPoints
+        std::vector<bool> isMerging(V2.rows(), false);
+        for (int i = 0; i < (int)V2.rows(); i++) {
+            Eigen::Vector2d p = V2.row(i);
+            for (auto& bp : bpPoints) {
+                double dx = p.x() - bp.x();
+                double dy = p.y() - bp.y();
+                if (dx*dx + dy*dy < 0.25) { // 0.5px tolerance
+                    isMerging[i] = true;
+                    break;
+                }
+            }
+            // also check along full Bp segment
+            if (!isMerging[i] && rawBp.size() >= 2) {
+                Eigen::Vector2d bp0 = rawBp.front().cast<double>();
+                Eigen::Vector2d bp1 = rawBp.back().cast<double>();
+                Eigen::Vector2d seg = bp1 - bp0;
+                double t = (p - bp0).dot(seg) / seg.dot(seg);
+                t = std::max(0.0, std::min(1.0, t));
+                double dist = (p - (bp0 + t * seg)).norm();
+                if (dist < 0.5) isMerging[i] = true;
+            }
+        }
+
+>>>>>>> realtime
         MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
         for (int idx : armpitIndices)
             part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
@@ -328,6 +358,183 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
 }
 
+<<<<<<< HEAD
+=======
+void monster::triangulateRegions(
+    const Region& host,
+    const std::vector<const Region*>& attachments,
+    Eigen::MatrixXd& V2,
+    Eigen::MatrixXi& F2,
+    std::vector<bool>& isDirichlet,
+    std::vector<bool>& isMerging,
+    std::vector<std::pair<int,int>>& armpitPairs)
+{
+    // =========================================================
+    // Phase 1: Collect host boundary points
+    // =========================================================
+    std::vector<Eigen::Vector2f> hostBoundary;
+    for (const Stroke& stroke : host.boundaries) {
+        int m = stroke.points.size();
+        for (int i = 0; i < m - 1; i++)
+            hostBoundary.push_back(stroke.points[i]);
+    }
+    int nHost = hostBoundary.size();
+
+    // =========================================================
+    // Phase 2: Collect Bp points for each attachment
+    // =========================================================
+    // bpByAttachment[i] = {bp0, bp1} for attachment i
+    std::vector<std::pair<Eigen::Vector2f, Eigen::Vector2f>> bpByAttachment;
+    for (const Region* att : attachments) {
+        auto pts = getMergingBoundaryPoints(*att);
+        if (pts.size() >= 2)
+            bpByAttachment.push_back({pts.front(), pts.back()});
+        else
+            bpByAttachment.push_back({{0,0},{0,0}}); // degenerate, skip
+    }
+
+    // =========================================================
+    // Phase 3: Build combined vertex list
+    // =========================================================
+    // Host boundary first, then Bp interior points
+    // Bp endpoints are already in the host boundary (they lie on Dp)
+    // so we don't add them again — we just find their indices
+    std::vector<Eigen::Vector2f> allVerts;
+    for (auto& p : hostBoundary) allVerts.push_back(p);
+
+    // Find indices of Bp endpoints in host boundary
+    auto findOrAdd = [&](const Eigen::Vector2f& p) -> int {
+        for (int i = 0; i < (int)allVerts.size(); i++) {
+            if ((allVerts[i] - p).norm() < 0.5f) return i;
+        }
+        allVerts.push_back(p);
+        return allVerts.size() - 1;
+    };
+
+    // For each attachment, find/add its Bp endpoints
+    std::vector<std::pair<int,int>> bpEndpointIndices; // per attachment
+    for (auto& bp : bpByAttachment) {
+        int i0 = findOrAdd(bp.first);
+        int i1 = findOrAdd(bp.second);
+        bpEndpointIndices.push_back({i0, i1});
+    }
+
+    // =========================================================
+    // Phase 4: Build edge list
+    // =========================================================
+    std::vector<Eigen::Vector2i> edges;
+
+    // Host boundary loop — but split at Bp endpoints
+    // We need to ensure Bp endpoints are proper vertices in the boundary
+    // Rebuild boundary loop inserting Bp endpoints where they fall
+    // For simplicity: boundary is already sampled densely enough that
+    // Bp endpoints are exact matches — findOrAdd handles this above
+    for (int i = 0; i < nHost - 1; i++)
+        edges.push_back({i, i + 1});
+    edges.push_back({nHost - 1, 0}); // close loop
+
+    // Bp constraint edges
+    for (auto& ep : bpEndpointIndices)
+        edges.push_back({ep.first, ep.second});
+
+    // =========================================================
+    // Phase 5: Build Eigen matrices and triangulate
+    // =========================================================
+    int nVerts = allVerts.size();
+    Eigen::MatrixXd V(nVerts, 2);
+    for (int i = 0; i < nVerts; i++) {
+        V(i, 0) = allVerts[i].x();
+        V(i, 1) = allVerts[i].y();
+    }
+    Eigen::MatrixXi E(edges.size(), 2);
+    for (int i = 0; i < (int)edges.size(); i++) {
+        E(i, 0) = edges[i].x();
+        E(i, 1) = edges[i].y();
+    }
+    Eigen::MatrixXd H(0, 2);
+    igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
+
+    // =========================================================
+    // Phase 6: Classify output vertices
+    // =========================================================
+    int nOut = V2.rows();
+    isDirichlet.assign(nOut, false);
+    isMerging.assign(nOut, false);
+
+    // Mark Dirichlet: vertices that match host boundary points (not Bp endpoints)
+    // In the vertex classification loop in triangulateRegions:
+    for (int i = 0; i < nOut; i++) {
+        Eigen::Vector2d p = V2.row(i);
+        // check against all Bp segments
+        for (int bi = 0; bi < (int)bpByAttachment.size(); bi++) {
+            auto& bp = bpByAttachment[bi];
+            Eigen::Vector2d bp0 = bp.first.cast<double>();
+            Eigen::Vector2d bp1 = bp.second.cast<double>();
+            Eigen::Vector2d seg = bp1 - bp0;
+            double t = (p - bp0).dot(seg) / seg.dot(seg);
+            t = std::max(0.0, std::min(1.0, t));
+            double dist = (p - (bp0 + t * seg)).norm();
+            if (dist < 0.5) {
+                // check if it's an endpoint (armpit) — mark differently
+                bool isEndpoint = (p - bp0).norm() < 0.5 ||
+                                  (p - bp1).norm() < 0.5;
+                if (!isEndpoint) {
+                    isMerging[i] = true;
+                    isDirichlet[i] = false;
+                }
+                // armpit endpoints: neither merging nor dirichlet
+                // they stay as false/false — handled separately via armpitPairs
+                break;
+            }
+        }
+    }
+
+    // Host outer contour Dp: Dirichlet where the vertex lies on the closed
+    // host-boundary polyline. Bp interior stays excluded via isMerging; Bp
+    // endpoints lie on Dp and are Dirichlet like the rest of the silhouette.
+    auto distPointToSegment = [](const Eigen::Vector2d& p,
+                                  const Eigen::Vector2d& a,
+                                  const Eigen::Vector2d& b) -> double {
+        Eigen::Vector2d ab = b - a;
+        double denom = ab.squaredNorm();
+        if (denom < 1e-30) return (p - a).norm();
+        double t = (p - a).dot(ab) / denom;
+        t = std::max(0.0, std::min(1.0, t));
+        return (p - (a + t * ab)).norm();
+    };
+    if (nHost >= 3) {
+        for (int i = 0; i < nOut; i++) {
+            if (isMerging[i]) continue;
+            Eigen::Vector2d p = V2.row(i);
+            double best = std::numeric_limits<double>::infinity();
+            for (int j = 0; j < nHost; j++) {
+                Eigen::Vector2d a = hostBoundary[j].cast<double>();
+                Eigen::Vector2d b = hostBoundary[(j + 1) % nHost].cast<double>();
+                best = std::min(best, distPointToSegment(p, a, b));
+                if (best < kContourDirichletEps) break;
+            }
+            if (best < kContourDirichletEps)
+                isDirichlet[i] = true;
+        }
+    }
+
+    // Mark armpit pairs: Bp endpoint vertices, front and back
+    // (back indices come after front/back duplication in createFrontBack)
+    for (auto& ep : bpEndpointIndices) {
+        // find which V2 indices correspond to ep.first and ep.second
+        Eigen::Vector2d p0 = V.row(ep.first);
+        Eigen::Vector2d p1 = V.row(ep.second);
+        int v0 = -1, v1 = -1;
+        for (int i = 0; i < nOut; i++) {
+            if ((V2.row(i).transpose() - p0).norm() < 0.5) v0 = i;
+            if ((V2.row(i).transpose() - p1).norm() < 0.5) v1 = i;
+        }
+        if (v0 >= 0) armpitPairs.push_back({v0, v0 + nOut}); // front, back
+        if (v1 >= 0) armpitPairs.push_back({v1, v1 + nOut});
+    }
+}
+
+>>>>>>> realtime
 StitchedMesh monster::stitchParts() {
     StitchedMesh result;
     int vOffset = 0;
