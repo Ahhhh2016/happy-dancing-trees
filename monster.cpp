@@ -27,8 +27,13 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     // Get Bp points from all attachment regions
     std::vector<Eigen::Vector2f> bpPoints;
     for (const Region& region : attachmentRegions) {
-        auto pts = getMergingBoundaryPoints(region);
+        std::vector<Eigen::Vector2f> pts = getMergingBoundaryPoints(region);
         bpPoints.insert(bpPoints.end(), pts.begin(), pts.end());
+    }
+
+    for (Eigen::Vector2f point : bpPoints) {
+        std::cout << "x: " << point.x() << std::endl;
+        std::cout << "y: " << point.y() << std::endl;
     }
 
     // Step 1-4: Triangulate host regions with Bp inserted, then split along Bp
@@ -238,7 +243,7 @@ std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
     // and are shared by the silhouette boundary, duplicating them causes fans)
     int nOld = V2.rows();
     std::vector<int> interiorBpIndices;
-    for (int i = 1; i < (int)bpIndices.size() - 1; i++)  // skip 0 and last
+    for (int i = 0; i < (int)bpIndices.size(); i++)  // skip 0 and last
         interiorBpIndices.push_back(bpIndices[i]);
 
     V2.conservativeResize(nOld + interiorBpIndices.size(), 2);
