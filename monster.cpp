@@ -359,7 +359,7 @@ StitchedMesh monster::stitchParts() {
 }
 
 void monster::weldSeams(StitchedMesh& mesh) {
-    const double WELD_EPS = 1e-6;
+    const double WELD_EPS = 0.5;
     const int n = mesh.V.rows();
 
     std::vector<int> remap(n);
