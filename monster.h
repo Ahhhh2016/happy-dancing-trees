@@ -61,6 +61,8 @@ class monster {
 public:
     monster();
     StitchedMesh buildMesh(const std::vector<Region>& regions);
+    std::vector<Eigen::Vector2f> subdivideBp(
+    const std::vector<Eigen::Vector2f>& pts, int steps);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
     std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,

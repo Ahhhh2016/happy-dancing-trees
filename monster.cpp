@@ -9,98 +9,109 @@ using namespace std;
 monster::monster() {}
 
 StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
-
-    // Separate regions into hosts and attachments
-    std::vector<Region> hostRegions;
-    std::vector<Region> attachmentRegions;
+    std::vector<Region> hostRegions, attachmentRegions;
     for (const Region& region : regions) {
-        bool hasMergingBoundary = false;
-        for (const Stroke& stroke : region.boundaries) {
-            if (stroke.isMergingBoundary) { hasMergingBoundary = true; break; }
-        }
-        if (hasMergingBoundary) attachmentRegions.push_back(region);
+        bool hasMerging = false;
+        for (const Stroke& stroke : region.boundaries)
+            if (stroke.isMergingBoundary) { hasMerging = true; break; }
+        if (hasMerging) attachmentRegions.push_back(region);
         else hostRegions.push_back(region);
     }
     std::cout << "Host regions: " << hostRegions.size() << std::endl;
     std::cout << "Attachment regions: " << attachmentRegions.size() << std::endl;
 
-    // Get Bp points from all attachment regions
+    // collect subdivided Bp points from all attachments
     std::vector<Eigen::Vector2f> bpPoints;
-    for (const Region& region : attachmentRegions) {
-        std::vector<Eigen::Vector2f> pts = getMergingBoundaryPoints(region);
-        bpPoints.insert(bpPoints.end(), pts.begin(), pts.end());
+    for (const Region& att : attachmentRegions) {
+        auto raw = getMergingBoundaryPoints(att);
+        auto sub = subdivideBp(raw, 5);
+        bpPoints.insert(bpPoints.end(), sub.begin(), sub.end());
     }
 
-    for (Eigen::Vector2f point : bpPoints) {
-        std::cout << "x: " << point.x() << std::endl;
-        std::cout << "y: " << point.y() << std::endl;
-    }
-
-    // Step 1-4: Triangulate host regions with Bp inserted, then split along Bp
+    // triangulate host regions
     for (const Region& region : hostRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
+        Eigen::MatrixXd V, V2;
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPoints);
-        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);
         auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
+
+        // split and mark isMerging per attachment
+        std::vector<int> armpitIndices;
+        std::vector<bool> isMerging(V2.rows(), false);
+        for (const Region& att : attachmentRegions) {
+            auto raw = getMergingBoundaryPoints(att);
+            auto myBp = subdivideBp(raw, 5);
+            auto myArmpit = splitAlongBp(V2, F2, myBp);
+            armpitIndices.insert(armpitIndices.end(), myArmpit.begin(), myArmpit.end());
+            auto myMerging = buildIsMerging(V2, myBp, 0.5);
+            for (int i = 0; i < V2.rows(); i++)
+                if (myMerging[i]) isMerging[i] = true;
+        }
+
         int overlap = 0;
         for (int i = 0; i < V2.rows(); i++)
             if (isDirichlet[i] && isMerging[i]) overlap++;
         std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+
         MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
         for (int idx : armpitIndices)
             part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
         m_meshParts.push_back(part);
 
-        std::cout << "Host n (boundary input points): " << n << std::endl;
         std::cout << "Host V2 total: " << V2.rows() << std::endl;
-
         int mCount = 0;
         for (bool b : isMerging) if (b) mCount++;
         std::cout << "Merging verts host: " << mCount << " / " << V2.rows() << std::endl;
     }
 
-
-    // Step 5-6: Triangulate attachment regions
+    // triangulate attachment regions
     for (const Region& region : attachmentRegions) {
-        Eigen::MatrixXd V;
-        Eigen::MatrixXd V2;
+        Eigen::MatrixXd V, V2;
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2);
-        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);  // add this
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
+        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
+
+        auto raw = getMergingBoundaryPoints(region);
+        auto myBp = subdivideBp(raw, 5);
+        auto isMerging = buildIsMerging(V2, myBp, 0.5);
+
         int overlap = 0;
         for (int i = 0; i < V2.rows(); i++)
             if (isDirichlet[i] && isMerging[i]) overlap++;
-        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+        std::cout << "Attachment Dirichlet+Merging overlap: " << overlap << std::endl;
+
         m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
 
-        std::cout << "Attachment n (boundary input points): " << n << std::endl;
         std::cout << "Attachment V2 total: " << V2.rows() << std::endl;
-
         int mCount = 0;
         for (bool b : isMerging) if (b) mCount++;
         std::cout << "Merging verts attachment: " << mCount << " / " << V2.rows() << std::endl;
     }
 
-    // Step 7: Concatenate all MeshParts into one global StitchedMesh
-    // TODO: inter-region stitching along Bp (connect body and limb meshes)
     StitchedMesh result = stitchParts();
-
     Eigen::MatrixXd V3D(result.V.rows(), 3);
     V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
     igl::writeOBJ("mesh12.obj", V3D, result.F);
+    return result;
+}
 
+std::vector<Eigen::Vector2f> monster::subdivideBp(
+    const std::vector<Eigen::Vector2f>& pts, int steps) {
+    if (pts.size() < 2) return pts;
+    std::vector<Eigen::Vector2f> result;
+    Eigen::Vector2f p0 = pts.front(), p1 = pts.back();
+    for (int i = 0; i <= steps; i++) {
+        float t = (float)i / steps;
+        result.push_back(p0 + t * (p1 - p0));
+    }
     return result;
 }
 
 std::vector<bool> monster::buildIsMerging(const Eigen::MatrixXd& V,
-                                 const std::vector<Eigen::Vector2f>& bpPoints,
-                                 double eps) {
+                                          const std::vector<Eigen::Vector2f>& bpPoints,
+                                          double eps) {
     std::vector<bool> isMerging(V.rows(), false);
     if (bpPoints.size() < 2) return isMerging;
     for (int i = 0; i < V.rows(); i++) {
@@ -108,7 +119,6 @@ std::vector<bool> monster::buildIsMerging(const Eigen::MatrixXd& V,
         for (int j = 0; j + 1 < (int)bpPoints.size(); j++) {
             Eigen::Vector2d a = bpPoints[j].cast<double>();
             Eigen::Vector2d b = bpPoints[j+1].cast<double>();
-            // distance from p to segment ab
             Eigen::Vector2d ab = b - a, ap = p - a;
             double t = ap.dot(ab) / ab.dot(ab);
             t = std::max(0.0, std::min(1.0, t));
@@ -391,6 +401,12 @@ void monster::weldSeams(StitchedMesh& mesh) {
             remap[i] = it->second;
         else
             sideGrid[key] = i;
+
+        // in pass 1, when a weld happens:
+        if (it != sideGrid.end()) {
+            remap[i] = it->second;
+            std::cout << "Pass1 weld: vert " << i << " -> " << it->second << std::endl;
+        }
     }
 
     // Pass 2: weld Dp silhouette vertices — front matches back to close the surface
@@ -459,6 +475,14 @@ void monster::weldSeams(StitchedMesh& mesh) {
     mesh.isDirichlet = newDirichlet;
     mesh.isMerging = newMerging;
     mesh.armpitPairs = newArmpitPairs;
+
+    // debug
+    int pass1=0, pass2=0;
+    for (int i=0; i<n; i++) if (remap[i]!=i) {
+            if (mesh.isMerging[i]) pass1++;
+            else pass2++;
+        }
+    std::cout << "Pass 1 welded: " << pass1 << " Pass 2 welded: " << pass2 << std::endl;
 }
 
 std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
