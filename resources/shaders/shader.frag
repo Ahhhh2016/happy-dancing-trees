@@ -16,10 +16,20 @@ void main() {
         fragColor = vec4(0.0, 0.0, 0.0, 1);
         return;
     }
-    vec4 lightPos   = vec4(-2.0, 2.0, -3.0 , 1.0);
-    vec3 lightColor = vec3(1.0f, alpha, 0.0f);
-    vec4 lightDir   = normalize(-lightPos + position_worldSpace);
-    float c = clamp(dot(-normal_worldSpace, lightDir), 0, 1);
+    vec3 N = normalize(normal_worldSpace.xyz);
+    vec3 L = normalize(vec3(-2.0, 2.0, -3.0) - position_worldSpace.xyz);
+    vec3 V = normalize(vec3(0.0, 0.0, -5.0) - position_worldSpace.xyz);
+    vec3 H = normalize(L + V);
 
-    fragColor = vec4(red * c * lightColor[0], green * c * lightColor[0], blue * c * lightColor[0], 1);
+    // Two-sided diffuse helps preserve a soft "inflated balloon" read.
+    float diffuse = max(abs(dot(N, L)), 0.0);
+    float spec = pow(max(dot(N, H), 0.0), 72.0);
+    float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+
+    vec3 baseColor = vec3(red, green, blue);
+    vec3 color = baseColor * (0.22 + 0.78 * diffuse); // ambient + diffuse
+    color += vec3(1.0) * (0.85 * spec);               // glossy white highlight
+    color += vec3(1.0, 0.85, 0.95) * (0.18 * rim);    // subtle candy/plastic edge glow
+
+    fragColor = vec4(clamp(color, 0.0, 1.0), alpha);
 }

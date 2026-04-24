@@ -94,6 +94,13 @@ private:
     std::vector<bool> buildIsDirichlet(const Eigen::MatrixXd& V2,
                                        const Eigen::MatrixXd& V_input,
                                        int n, double eps = kContourDirichletEps);
+    Eigen::SparseMatrix<double> buildCotangentLaplacian(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F); 
+    Eigen::VectorXd buildMass(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F); // for each triangle, computes 1/3 of the area to each of the three vertices (a_i)
+    Eigen::VectorXd buildRHS(const Eigen::VectorXd& a, const std::vector<bool>& isFront, double c); 
+    Eigen::VectorXd solvePoisson(const Eigen::SparseMatrix<double>& L, const Eigen::VectorXd& rhs, const std::vector<bool>& isDirichlet);
+    Eigen::VectorXd toSemiElliptical(const Eigen::VectorXd& h_tilde, const std::vector<bool>& isFront);
+    void inflateMesh(Eigen::MatrixXd& V, const Eigen::MatrixXi& F, const std::vector<bool>& isFront, const std::vector<bool>& isDirichlet, double c);
+
 };
 
 

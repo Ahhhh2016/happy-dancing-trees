@@ -14,7 +14,7 @@ out vec4 position_worldSpace;
 
 void main() {
     normal_worldSpace   = vec4(normalize(inverseTransposeModel * normal), 0);
-    position_worldSpace = model * vec4(position, 1.0);
+    position_worldSpace = vec4(position, 1.0);
 
     gl_Position = proj * view * model * vec4(position, 1.0);
 }
