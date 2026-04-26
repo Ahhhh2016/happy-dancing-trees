@@ -74,7 +74,7 @@ private:
     // Step 1: Triangulate a region's 2D boundary using CDT
     void triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
                            Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                           const std::vector<Eigen::Vector2f>& extraPoints = {});
+                           const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines = {});
 
     // Step 2: Duplicate front/back of mesh
     MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
@@ -84,10 +84,12 @@ private:
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
     std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                      const std::vector<Eigen::Vector2f>& bpPoints);
+                      const std::vector<Eigen::Vector2f>& bpPolyline,
+                      const Eigen::Vector2d& limbInteriorSample);
 
     // Step 4: Get merging boundary points from a region
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
+    Eigen::Vector2d getLimbInteriorSample(const Region& region) const;
 
     void weldSeams(StitchedMesh& mesh);
 

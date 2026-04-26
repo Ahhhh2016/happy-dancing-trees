@@ -4,6 +4,7 @@
 #include <cmath>
 #include <numeric>
 #include <map>
+#include <set>
 #include <igl/writeOBJ.h>
 #include <igl/remove_unreferenced.h>
 #include <igl/min_quad_with_fixed.h>
@@ -14,8 +15,9 @@ using namespace std;
 monster::monster() {}
 
 StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
+    m_meshParts.clear();
 
-    // Separate regions into hosts and attachments
+    // Separate regions into hosts and attachments.
     std::vector<Region> hostRegions;
     std::vector<Region> attachmentRegions;
     for (const Region& region : regions) {
@@ -29,67 +31,97 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     std::cout << "Host regions: " << hostRegions.size() << std::endl;
     std::cout << "Attachment regions: " << attachmentRegions.size() << std::endl;
 
-    // Get Bp points from all attachment regions
-    std::vector<Eigen::Vector2f> bpPoints;
-    for (const Region& region : attachmentRegions) {
-        auto pts = getMergingBoundaryPoints(region);
-        bpPoints.insert(bpPoints.end(), pts.begin(), pts.end());
+    auto densifyPolyline = [](const std::vector<Eigen::Vector2f>& poly, float spacing) {
+        if (poly.size() < 2 || spacing <= 0.0f) return poly;
+        std::vector<Eigen::Vector2f> out;
+        out.push_back(poly.front());
+        for (size_t i = 1; i < poly.size(); i++) {
+            const Eigen::Vector2f a = poly[i - 1];
+            const Eigen::Vector2f b = poly[i];
+            const float len = (b - a).norm();
+            const int steps = std::max(1, static_cast<int>(std::floor(len / spacing)));
+            for (int s = 1; s <= steps; s++) {
+                const float t = static_cast<float>(s) / static_cast<float>(steps);
+                out.push_back(a + (b - a) * t);
+            }
+        }
+        return out;
+    };
+
+    // Gather each limb Bp polyline independently.
+    std::vector<std::vector<Eigen::Vector2f>> bpPolylines;
+    std::vector<Eigen::Vector2d> limbInteriorSamples;
+    std::vector<Region> preparedAttachments;
+    for (const Region& limb : attachmentRegions) {
+        std::vector<Eigen::Vector2f> bp = densifyPolyline(getMergingBoundaryPoints(limb), 2.0f);
+        if (bp.size() < 2) continue;
+        bpPolylines.push_back(bp);
+        limbInteriorSamples.push_back(getLimbInteriorSample(limb));
+
+        // Keep limb triangulation boundary in sync with densified Bp points.
+        Region prepared = limb;
+        for (Stroke& s : prepared.boundaries) {
+            if (s.isMergingBoundary) {
+                s.points = bp;
+                break;
+            }
+        }
+        preparedAttachments.push_back(prepared);
     }
 
-    // Step 1-4: Triangulate host regions with Bp inserted, then split along Bp
+    // 1-3) Body CDT with inserted Bp constraints + split along each Bp.
     for (const Region& region : hostRegions) {
         Eigen::MatrixXd V;
         Eigen::MatrixXd V2;
         Eigen::MatrixXi F2;
         int n;
-        triangulateRegion(region, V, n, V2, F2, bpPoints);
-        std::vector<int> armpitIndices = splitAlongBp(V2, F2, bpPoints);
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
-        auto isDirichlet = buildIsDirichlet(V2, V, n);
-        int overlap = 0;
-        for (int i = 0; i < V2.rows(); i++)
-            if (isDirichlet[i] && isMerging[i]) overlap++;
-        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+        triangulateRegion(region, V, n, V2, F2, bpPolylines);
 
-        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging);
-        for (int idx : armpitIndices)
-            part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
+        std::vector<bool> hostMerging(V2.rows(), false);
+        std::set<int> armpitEndpointSet;
+        for (size_t li = 0; li < bpPolylines.size(); li++) {
+            std::vector<int> outsideBp = splitAlongBp(V2, F2, bpPolylines[li], limbInteriorSamples[li]);
+            if ((int)hostMerging.size() < V2.rows()) hostMerging.resize(V2.rows(), false);
+            for (int idx : outsideBp) {
+                if (idx >= 0 && idx < V2.rows()) hostMerging[idx] = true;
+            }
+            if (outsideBp.size() >= 2) {
+                armpitEndpointSet.insert(outsideBp.front());
+                armpitEndpointSet.insert(outsideBp.back());
+            }
+        }
+
+        auto isDirichlet = buildIsDirichlet(V2, V, n);
+        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, hostMerging);
+        for (int idx : armpitEndpointSet) {
+            if (idx >= 0 && idx < V2.rows())
+                part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
+        }
         m_meshParts.push_back(part);
 
-        std::cout << "Host n (boundary input points): " << n << std::endl;
-        std::cout << "Host V2 total: " << V2.rows() << std::endl;
-
-        int mCount = 0;
-        for (bool b : isMerging) if (b) mCount++;
-        std::cout << "Merging verts host: " << mCount << " / " << V2.rows() << std::endl;
+        int mCount = 0; for (bool b : hostMerging) if (b) mCount++;
+        std::cout << "Host V2=" << V2.rows() << " F2=" << F2.rows()
+                  << " merging(outside Bp)=" << mCount << std::endl;
     }
 
-
-    // Step 5-6: Triangulate attachment regions
-    for (const Region& region : attachmentRegions) {
+    // 4) Leg CDT using D_p U B_p.
+    for (size_t li = 0; li < preparedAttachments.size(); li++) {
+        const Region& region = preparedAttachments[li];
         Eigen::MatrixXd V;
         Eigen::MatrixXd V2;
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2);
-        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);  // add this
-        auto isMerging = buildIsMerging(V2, bpPoints, 0.5);
-        int overlap = 0;
-        for (int i = 0; i < V2.rows(); i++)
-            if (isDirichlet[i] && isMerging[i]) overlap++;
-        std::cout << "Host Dirichlet+Merging overlap: " << overlap << std::endl;
+        auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
+        auto isMerging = buildIsMerging(V2, bpPolylines[li], 0.5);
         m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
 
-        std::cout << "Attachment n (boundary input points): " << n << std::endl;
-        std::cout << "Attachment V2 total: " << V2.rows() << std::endl;
-
-        int mCount = 0;
-        for (bool b : isMerging) if (b) mCount++;
-        std::cout << "Merging verts attachment: " << mCount << " / " << V2.rows() << std::endl;
+        int mCount = 0; for (bool b : isMerging) if (b) mCount++;
+        std::cout << "Limb V2=" << V2.rows() << " F2=" << F2.rows()
+                  << " merging(Bp)=" << mCount << std::endl;
     }
 
-    // Step 7: Concatenate all MeshParts into one global StitchedMesh
-    // TODO: inter-region stitching along Bp (connect body and limb meshes)
+    // 5) Stitch host outside-Bp to limb Bp by same-side seam welding.
     StitchedMesh result = stitchParts();
 
     std::vector<bool> isFront(result.V.rows(), false);
@@ -137,6 +169,18 @@ std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& reg
         }
     }
     return {};
+}
+
+Eigen::Vector2d monster::getLimbInteriorSample(const Region& region) const {
+    for (const Stroke& stroke : region.boundaries) {
+        if (stroke.isMergingBoundary) continue;
+        const int m = static_cast<int>(stroke.points.size());
+        if (m >= 1) return stroke.points[m / 2].cast<double>();
+    }
+    for (const Stroke& stroke : region.boundaries) {
+        if (!stroke.points.empty()) return stroke.points.front().cast<double>();
+    }
+    return Eigen::Vector2d::Zero();
 }
 
 MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
@@ -227,77 +271,86 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
 }
 
 std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                           const std::vector<Eigen::Vector2f>& bpPoints) {
-    if (bpPoints.size() < 2) return {};
+                           const std::vector<Eigen::Vector2f>& bpPolyline,
+                           const Eigen::Vector2d& limbInteriorSample) {
+    if (bpPolyline.size() < 2) return {};
 
-    // Step 1: Find Bp vertex indices in V2
+    constexpr double kMatchEps2 = 1e-2; // (0.1)^2
     std::vector<int> bpIndices;
-    for (const Eigen::Vector2f& bp : bpPoints) {
+    bpIndices.reserve(bpPolyline.size());
+    for (const Eigen::Vector2f& bp : bpPolyline) {
+        int found = -1;
         for (int i = 0; i < V2.rows(); i++) {
-            double dx = V2(i,0) - bp.x();
-            double dy = V2(i,1) - bp.y();
-            if (dx*dx + dy*dy < 0.01) {
-                bpIndices.push_back(i);
-                break;
-            }
+            const double dx = V2(i,0) - bp.x();
+            const double dy = V2(i,1) - bp.y();
+            if (dx*dx + dy*dy < kMatchEps2) { found = i; break; }
         }
+        if (found >= 0) bpIndices.push_back(found);
     }
-    std::cout << "Bp indices found: " << bpIndices.size() << std::endl;
     if (bpIndices.size() < 2) return {};
 
-    // p and q are the two endpoints of Bp
-    Eigen::Vector2d p = V2.row(bpIndices[0]);
-    Eigen::Vector2d q = V2.row(bpIndices[1]);
-    Eigen::Vector2d edge = q - p;
-
-    // Step 2: Duplicate Bp vertices (skip first and last — they sit on Dp
-    // and are shared by the silhouette boundary, duplicating them causes fans)
-    int nOld = V2.rows();
-    std::vector<int> interiorBpIndices;
-    for (int i = 1; i < (int)bpIndices.size() - 1; i++)  // skip 0 and last
-        interiorBpIndices.push_back(bpIndices[i]);
-
-    V2.conservativeResize(nOld + interiorBpIndices.size(), 2);
-    std::vector<int> duplicateIndices;
-    for (int i = 0; i < (int)interiorBpIndices.size(); i++) {
-        V2.row(nOld + i) = V2.row(interiorBpIndices[i]);
-        duplicateIndices.push_back(nOld + i);
+    // Duplicate every Bp vertex.
+    const int nOld = V2.rows();
+    V2.conservativeResize(nOld + static_cast<int>(bpIndices.size()), 2);
+    std::map<int,int> dupMap; // original -> duplicate
+    for (int k = 0; k < static_cast<int>(bpIndices.size()); k++) {
+        const int orig = bpIndices[k];
+        const int dup = nOld + k;
+        V2.row(dup) = V2.row(orig);
+        dupMap[orig] = dup;
     }
 
-    // Step 3: Classify triangles and remap (use interiorBpIndices not bpIndices)
+    auto sideOfPolyline = [&](const Eigen::Vector2d& x) {
+        // Signed side against the closest Bp segment.
+        double bestAbs = std::numeric_limits<double>::infinity();
+        double bestSide = 0.0;
+        for (size_t i = 0; i + 1 < bpPolyline.size(); i++) {
+            const Eigen::Vector2d a = bpPolyline[i].cast<double>();
+            const Eigen::Vector2d b = bpPolyline[i + 1].cast<double>();
+            const Eigen::Vector2d ab = b - a;
+            const double ab2 = ab.dot(ab);
+            if (ab2 < 1e-12) continue;
+            double t = (x - a).dot(ab) / ab2;
+            t = std::max(0.0, std::min(1.0, t));
+            const Eigen::Vector2d proj = a + t * ab;
+            const double s = ab.x() * (x.y() - a.y()) - ab.y() * (x.x() - a.x());
+            const double dist = (x - proj).norm();
+            if (dist < bestAbs) {
+                bestAbs = dist;
+                bestSide = s;
+            }
+        }
+        return bestSide;
+    };
+
+    const double insideSign = sideOfPolyline(limbInteriorSample);
+
+    // Triangles on the limb side get remapped to duplicated Bp vertices.
     for (int t = 0; t < F2.rows(); t++) {
         bool touchesBp = false;
-        for (int j = 0; j < 3; j++)
-            for (int bi : interiorBpIndices)
-                if (F2(t,j) == bi) { touchesBp = true; break; }
+        for (int c = 0; c < 3; c++) {
+            if (dupMap.find(F2(t,c)) != dupMap.end()) { touchesBp = true; break; }
+        }
         if (!touchesBp) continue;
 
-        // Compute triangle centroid
-        Eigen::Vector2d c = (V2.row(F2(t,0)) + V2.row(F2(t,1)) + V2.row(F2(t,2))) / 3.0;
+        const Eigen::Vector2d centroid =
+            (V2.row(F2(t,0)) + V2.row(F2(t,1)) + V2.row(F2(t,2))) / 3.0;
+        const double triSign = sideOfPolyline(centroid);
+        if (triSign * insideSign <= 0.0) continue;
 
-        // Classify using cross product: cross(edge, c - p)
-        double cross = edge.x() * (c.y() - p.y()) - edge.y() * (c.x() - p.x());
-
-        if (cross > 0) {
-            for (int j = 0; j < 3; j++) {
-                for (int k = 0; k < (int)bpIndices.size(); k++) {
-                    if (F2(t,j) == bpIndices[k]) {
-                        F2(t,j) = duplicateIndices[k];
-                    }
-                }
-            }
+        for (int c = 0; c < 3; c++) {
+            auto it = dupMap.find(F2(t,c));
+            if (it != dupMap.end()) F2(t,c) = it->second;
         }
     }
 
-    std::cout << "Split along Bp: " << bpIndices.size()
-              << " vertices duplicated" << std::endl;
-    // return the endpoint indices (the armpits)
-    return { bpIndices.front(), bpIndices.back() };
+    // Outside copy = original indices; limb will stitch to these.
+    return bpIndices;
 }
 
 void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
                                 Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                                const std::vector<Eigen::Vector2f>& extraPoints) {
+                                const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines) {
     std::vector<Eigen::Vector2f> boundaryPoints;
     for (const Stroke& stroke : region.boundaries) {
         int m = stroke.points.size();
@@ -307,19 +360,24 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     n = boundaryPoints.size();
-    int totalPoints = n + (int)extraPoints.size();
-    V.resize(totalPoints, 2);
+    std::vector<Eigen::Vector2f> allPoints = boundaryPoints;
+    std::vector<std::vector<int>> interiorIndices;
+    interiorIndices.reserve(interiorPolylines.size());
+    for (const auto& poly : interiorPolylines) {
+        std::vector<int> idx;
+        idx.reserve(poly.size());
+        for (const auto& p : poly) {
+            idx.push_back(static_cast<int>(allPoints.size()));
+            allPoints.push_back(p);
+        }
+        interiorIndices.push_back(std::move(idx));
+    }
+    V.resize(static_cast<int>(allPoints.size()), 2);
 
     // Add boundary points
-    for (int i = 0; i < n; i++) {
-        V(i, 0) = boundaryPoints[i].x();
-        V(i, 1) = boundaryPoints[i].y();
-    }
-
-    // Add extra points (Bp) after boundary points
-    for (int i = 0; i < (int)extraPoints.size(); i++) {
-        V(n + i, 0) = extraPoints[i].x();
-        V(n + i, 1) = extraPoints[i].y();
+    for (int i = 0; i < static_cast<int>(allPoints.size()); i++) {
+        V(i, 0) = allPoints[i].x();
+        V(i, 1) = allPoints[i].y();
     }
 
     // Build boundary edges (closed loop of boundary points only)
@@ -329,9 +387,11 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
     edges.push_back({n - 1, 0});  // close boundary
 
-    // Add Bp as interior constrained edge (connects the two extra points)
-    if (extraPoints.size() == 2) {
-        edges.push_back({n, n + 1});  // Bp edge
+    // Add each Bp polyline as constrained interior segments.
+    for (const auto& idx : interiorIndices) {
+        for (size_t i = 0; i + 1 < idx.size(); i++) {
+            edges.push_back({idx[i], idx[i + 1]});
+        }
     }
 
     Eigen::MatrixXi E(edges.size(), 2);
@@ -341,7 +401,8 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     Eigen::MatrixXd H(0, 2);
-    igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
+    // Y: prevent Steiner points on constrained segments.
+    igl::triangle::triangulate(V, E, H, "pYQa100q20", V2, F2);
 }
 
 StitchedMesh monster::stitchParts() {
@@ -386,12 +447,6 @@ void monster::weldSeams(StitchedMesh& mesh) {
     for (int i = 0; i < n; i++) {
         if (!mesh.isMerging[i]) continue;
 
-        // skip armpit vertices — they stay as coincident but separate
-        bool isArmpit = false;
-        for (auto& p : mesh.armpitPairs)
-            if (i == p.first || i == p.second) { isArmpit = true; break; }
-        if (isArmpit) continue;
-
         auto key = std::make_pair(
             std::make_pair(
                 (int)std::round(mesh.V(i,0) / WELD_EPS),
@@ -425,6 +480,23 @@ void monster::weldSeams(StitchedMesh& mesh) {
 
 
     }
+
+    // Pass 3: seal slit corners by welding armpit front/back endpoint pairs.
+    // This closes the small corner holes without collapsing the full seam.
+    for (const auto& p : mesh.armpitPairs) {
+        if (p.first >= 0 && p.first < n && p.second >= 0 && p.second < n)
+            remap[p.second] = remap[p.first];
+    }
+
+    // Normalize remap chains (A->B, B->C => A->C).
+    auto findRoot = [&](int x) {
+        while (remap[x] != x) {
+            remap[x] = remap[remap[x]];
+            x = remap[x];
+        }
+        return x;
+    };
+    for (int i = 0; i < n; i++) remap[i] = findRoot(i);
 
     // Apply remap to F
     for (int f = 0; f < mesh.F.rows(); f++)
