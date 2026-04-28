@@ -289,12 +289,17 @@ std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
     }
     if (bpIndices.size() < 2) return {};
 
-    // Duplicate every Bp vertex.
+    // Duplicate only interior Bp vertices. Endpoints must remain shared
+    // pinch points where the slit closes back onto D_p.
+    std::vector<int> interiorBp;
+    if (bpIndices.size() > 2) {
+        interiorBp.assign(bpIndices.begin() + 1, bpIndices.end() - 1);
+    }
     const int nOld = V2.rows();
-    V2.conservativeResize(nOld + static_cast<int>(bpIndices.size()), 2);
-    std::map<int,int> dupMap; // original -> duplicate
-    for (int k = 0; k < static_cast<int>(bpIndices.size()); k++) {
-        const int orig = bpIndices[k];
+    V2.conservativeResize(nOld + static_cast<int>(interiorBp.size()), 2);
+    std::map<int,int> dupMap; // original interior -> duplicate
+    for (int k = 0; k < static_cast<int>(interiorBp.size()); k++) {
+        const int orig = interiorBp[k];
         const int dup = nOld + k;
         V2.row(dup) = V2.row(orig);
         dupMap[orig] = dup;
@@ -325,7 +330,7 @@ std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
 
     const double insideSign = sideOfPolyline(limbInteriorSample);
 
-    // Triangles on the limb side get remapped to duplicated Bp vertices.
+    // Triangles on the limb side get remapped to duplicated interior Bp vertices.
     for (int t = 0; t < F2.rows(); t++) {
         bool touchesBp = false;
         for (int c = 0; c < 3; c++) {
