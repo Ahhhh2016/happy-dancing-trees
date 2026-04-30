@@ -26,6 +26,8 @@ public:
     void clearCanvas();
     bool loadImageFromFile(const QString &file);
     bool saveImageToFile(const QString &file);
+    /// Writes pixels for 3D texturing: imported template + region fills, never stroke outlines.
+    bool saveMeshTextureToFile(const QString &file);
     void displayImage();
     void resize(int w, int h);
 
@@ -50,6 +52,8 @@ public:
 
 private:
     std::vector<RGBA> m_data;
+    /// Same dimensions as m_data; used only when exporting mesh textures (no black strokes).
+    std::vector<RGBA> m_textureNoStroke;
     std::vector<Stroke> m_strokes; // Only contains user drawn Dp
     std::vector<Region> m_regions; // Contains all the regions, and in boundaries containing closing curves
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
@@ -98,7 +102,9 @@ private:
     int computeDepthOrderForStroke(const Stroke &stroke) const;
     void commitStrokeAsRegion(const Stroke &stroke);
     QImage makeImageFromCanvasData() const;
+    QImage makeImageFromTextureNoStrokeData() const;
     void loadCanvasDataFromImage(const QImage &image);
+    void loadTextureNoStrokeFromImage(const QImage &image);
     void renderRegion(const Region &region);
     void paintStrokePreview(QPainter &painter, const Stroke &stroke) const;
 };

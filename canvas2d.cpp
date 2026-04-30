@@ -14,6 +14,8 @@ constexpr float kMinStrokePointSpacing = 2.0f; // minimum distance between point
 constexpr float kIntersectionEpsilon = 1e-4f;
 const QColor kFillColor(245, 245, 245);
 const QColor kOutlineColor(0, 0, 0);
+/// Imported reference on canvas is blended toward white so strokes stay readable (mesh texture stays full color).
+constexpr float kImportedTemplateDisplayFade = 0.48f;
 
 bool isInsideCanvas(const QPointF &point, int width, int height) {
     return point.x() >= 0 && point.x() < width && point.y() >= 0 && point.y() < height;
@@ -98,6 +100,16 @@ QPainterPath makeClosedFillPath(const Stroke &stroke) {
     fillPath.closeSubpath();
     return fillPath;
 }
+
+RGBA fadeImportedPixelForCanvas(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
+    const float t = kImportedTemplateDisplayFade;
+    auto blend = [t](std::uint8_t c) -> std::uint8_t {
+        return static_cast<std::uint8_t>(
+            std::lround(static_cast<double>(c) * (1.0 - static_cast<double>(t)) + 255.0 * static_cast<double>(t)));
+    };
+    return RGBA{blend(r), blend(g), blend(b), a};
+}
+
 }
 
 void Canvas2D::init() {
@@ -109,6 +121,7 @@ void Canvas2D::init() {
 
 void Canvas2D::clearCanvas() {
     m_data.assign(m_width * m_height, RGBA{255, 255, 255, 255});
+    m_textureNoStroke = m_data;
     m_strokes.clear();
     m_regions.clear();
     m_connectedRegions.clear();
@@ -132,8 +145,15 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
 
     m_data.clear();
     m_data.reserve(m_width * m_height);
-    for (int i = 0; i < arr.size() / 4; i++){
-        m_data.push_back(RGBA{(std::uint8_t) arr[4*i], (std::uint8_t) arr[4*i+1], (std::uint8_t) arr[4*i+2], (std::uint8_t) arr[4*i+3]});
+    m_textureNoStroke.clear();
+    m_textureNoStroke.reserve(m_width * m_height);
+    for (int i = 0; i < arr.size() / 4; i++) {
+        const std::uint8_t r = static_cast<std::uint8_t>(arr[4 * i]);
+        const std::uint8_t g = static_cast<std::uint8_t>(arr[4 * i + 1]);
+        const std::uint8_t b = static_cast<std::uint8_t>(arr[4 * i + 2]);
+        const std::uint8_t a = static_cast<std::uint8_t>(arr[4 * i + 3]);
+        m_textureNoStroke.push_back(RGBA{r, g, b, a});
+        m_data.push_back(fadeImportedPixelForCanvas(r, g, b, a));
     }
     m_strokes.clear();
     m_regions.clear();
@@ -157,6 +177,23 @@ bool Canvas2D::saveImageToFile(const QString &file) {
     return true;
 }
 
+bool Canvas2D::saveMeshTextureToFile(const QString &file) {
+    if (static_cast<int>(m_textureNoStroke.size()) != m_width * m_height) {
+        std::cout << "Mesh texture buffer size mismatch" << std::endl;
+        return false;
+    }
+    QImage myImage = QImage(m_width, m_height, QImage::Format_RGBX8888);
+    for (int i = 0; i < static_cast<int>(m_textureNoStroke.size()); ++i) {
+        const RGBA &p = m_textureNoStroke[static_cast<std::size_t>(i)];
+        myImage.setPixelColor(i % m_width, i / m_width, QColor(p.r, p.g, p.b, p.a));
+    }
+    if (!myImage.save(file)) {
+        std::cout << "Failed to save mesh texture" << std::endl;
+        return false;
+    }
+    return true;
+}
+
 void Canvas2D::displayImage() {
     QByteArray img(reinterpret_cast<const char *>(m_data.data()), 4 * m_data.size());
     QImage now = QImage((const uchar*)img.data(), m_width, m_height, QImage::Format_RGBX8888);
@@ -168,7 +205,8 @@ void Canvas2D::displayImage() {
 void Canvas2D::resize(int w, int h) {
     m_width = w;
     m_height = h;
-    m_data.resize(w * h);
+    m_data.resize(static_cast<std::size_t>(w * h));
+    m_textureNoStroke.resize(static_cast<std::size_t>(w * h));
     displayImage();
 }
 
@@ -426,6 +464,39 @@ void Canvas2D::loadCanvasDataFromImage(const QImage &image) {
     }
 }
 
+QImage Canvas2D::makeImageFromTextureNoStrokeData() const {
+    QImage image(m_width, m_height, QImage::Format_RGBX8888);
+    for (int i = 0; i < static_cast<int>(m_textureNoStroke.size()); ++i) {
+        const RGBA &p = m_textureNoStroke[static_cast<std::size_t>(i)];
+        image.setPixelColor(
+            i % m_width,
+            i / m_width,
+            QColor(p.r, p.g, p.b, p.a)
+        );
+    }
+    return image;
+}
+
+void Canvas2D::loadTextureNoStrokeFromImage(const QImage &image) {
+    QImage converted = image.convertToFormat(QImage::Format_RGBX8888);
+    m_textureNoStroke.clear();
+    m_textureNoStroke.reserve(static_cast<std::size_t>(converted.width() * converted.height()));
+
+    QByteArray arr = QByteArray::fromRawData(
+        reinterpret_cast<const char *>(converted.bits()),
+        converted.sizeInBytes()
+    );
+
+    for (int i = 0; i < arr.size() / 4; ++i) {
+        m_textureNoStroke.push_back(RGBA{
+            static_cast<std::uint8_t>(arr[4 * i]),
+            static_cast<std::uint8_t>(arr[4 * i + 1]),
+            static_cast<std::uint8_t>(arr[4 * i + 2]),
+            static_cast<std::uint8_t>(arr[4 * i + 3])
+        });
+    }
+}
+
 void Canvas2D::renderRegion(const Region &region) {
     if (region.boundaries.empty()) {
         return;
@@ -455,6 +526,18 @@ void Canvas2D::renderRegion(const Region &region) {
 
     painter.end();
     loadCanvasDataFromImage(image);
+
+    {
+        QImage texImage = makeImageFromTextureNoStrokeData();
+        QPainter texPainter(&texImage);
+        texPainter.setRenderHint(QPainter::Antialiasing, true);
+        if (!m_hasImportedTemplate) {
+            texPainter.fillPath(fillPath, kFillColor);
+        }
+        texPainter.end();
+        loadTextureNoStrokeFromImage(texImage);
+    }
+
     displayImage();
 }
 
