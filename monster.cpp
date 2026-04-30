@@ -13,7 +13,8 @@ using namespace std;
 
 monster::monster() {}
 
-StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
+StitchedMesh monster::buildMesh(const std::vector<Region>& regions,
+                                double canvasW, double canvasH) {
 
     // Separate regions into hosts and attachments
     std::vector<Region> hostRegions;
@@ -91,6 +92,16 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
     // Step 7: Concatenate all MeshParts into one global StitchedMesh
     // TODO: inter-region stitching along Bp (connect body and limb meshes)
     StitchedMesh result = stitchParts();
+
+    // Qt stroke coords match the on-screen sketch, but the meshed embedding ended up
+    // 180° out (both axes inverted vs. the drawing). Rotate the XY embedding about
+    // the canvas center before thickness inflation so OBJ / GL / MeshLab agree with 2D.
+    if (canvasW > 0.0 && canvasH > 0.0) {
+        for (int i = 0; i < result.V.rows(); ++i) {
+            result.V(i, 0) = canvasW - result.V(i, 0);
+            result.V(i, 1) = canvasH - result.V(i, 1);
+        }
+    }
 
     std::vector<bool> isFront(result.V.rows(), false);
     for (int i = 0; i < result.V.rows(); ++i) {

@@ -63,7 +63,9 @@ struct StitchedMesh {
 class monster {
 public:
     monster();
-    StitchedMesh buildMesh(const std::vector<Region>& regions);
+    // canvasW/canvasH: 2D drawing size in the same units as stroke coordinates.
+    // Embeddings are rotated 180° in-plane so the 3D mesh matches the on-screen sketch.
+    StitchedMesh buildMesh(const std::vector<Region>& regions, double canvasW, double canvasH);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
     std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,
