@@ -1,15 +1,53 @@
 #include "monster.h"
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <cmath>
 #include <numeric>
 #include <map>
-#include <igl/writeOBJ.h>
-#include <igl/remove_unreferenced.h>
+#include <algorithm>
 #include <igl/min_quad_with_fixed.h>
 
 using namespace Eigen;
 using namespace std;
+
+namespace {
+
+// Planar UVs from canvas XY (Qt-style: y grows downward). Fragment shader flips v
+// when sampling so PNG rows match the on-screen image.
+void writeOBJWithPlanarUV(const std::string &path,
+                          const Eigen::MatrixXd &V,
+                          const Eigen::MatrixXi &F,
+                          double canvasW,
+                          double canvasH) {
+    std::ofstream out(path);
+    if (!out) {
+        std::cerr << "Failed to open OBJ for writing: " << path << std::endl;
+        return;
+    }
+    out << std::setprecision(17);
+    const double invW = (canvasW > 1e-8) ? 1.0 / canvasW : 1.0;
+    const double invH = (canvasH > 1e-8) ? 1.0 / canvasH : 1.0;
+
+    for (int i = 0; i < V.rows(); ++i) {
+        const double z = (V.cols() >= 3) ? V(i, 2) : 0.0;
+        out << "v " << V(i, 0) << " " << V(i, 1) << " " << z << "\n";
+    }
+    for (int i = 0; i < V.rows(); ++i) {
+        const double u = std::clamp(V(i, 0) * invW, 0.0, 1.0);
+        const double v = std::clamp(V(i, 1) * invH, 0.0, 1.0);
+        out << "vt " << u << " " << v << "\n";
+    }
+    for (int i = 0; i < F.rows(); ++i) {
+        const int i0 = F(i, 0) + 1;
+        const int i1 = F(i, 1) + 1;
+        const int i2 = F(i, 2) + 1;
+        out << "f " << i0 << "/" << i0 << " " << i1 << "/" << i1 << " " << i2 << "/" << i2 << "\n";
+    }
+}
+
+} // namespace
 
 monster::monster() {}
 
@@ -115,7 +153,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions,
     } else {
         V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
     }
-    igl::writeOBJ("mesh12.obj", V3D, result.F);
+    writeOBJWithPlanarUV("mesh12.obj", V3D, result.F, canvasW, canvasH);
 
     return result;
 }

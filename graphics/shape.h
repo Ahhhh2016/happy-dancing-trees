@@ -12,9 +12,15 @@ class Shape
 {
 public:
     Shape();
+    ~Shape();
+
+    void destroyGL();
 
     void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3d> &normals, const std::vector<Eigen::Vector3i> &triangles);
     void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles);
+    /// Expands triangles into corner lists; \p texcoordsPerCorner size must be 3 × triangle count (or empty for no UV).
+    void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles,
+              const std::vector<Eigen::Vector2f> &texcoordsPerCorner, GLuint diffuseTexture);
     void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles, const std::vector<Eigen::Vector4i> &tetIndices);
 
     void setVertices(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3d> &normals);
@@ -25,6 +31,10 @@ public:
     void toggleWireframe();
 
     void draw(Shader *shader);
+
+private:
+    void destroySurfaceGL();
+    void destroyTetGL();
 
 private:
     GLuint m_surfaceVao;
@@ -47,6 +57,9 @@ private:
     Eigen::Matrix4f m_modelMatrix;
 
     bool m_wireframe;
+
+    GLuint m_diffuseTex = 0;
+    bool m_hasTexture = false;
 };
 
 #endif // SHAPE_H

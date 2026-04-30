@@ -4,12 +4,15 @@ out vec4 fragColor;
 // Additional information for lighting
 in vec4 normal_worldSpace;
 in vec4 position_worldSpace;
+in vec2 texCoord;
 
 uniform int wire = 0;
 uniform float red = 1.0;
 uniform float green = 1.0;
 uniform float blue = 1.0;
 uniform float alpha = 1.0;
+uniform int useTexture = 0;
+uniform sampler2D diffuseTex;
 
 void main() {
     if (wire == 1) {
@@ -27,6 +30,10 @@ void main() {
     float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);
 
     vec3 baseColor = vec3(red, green, blue);
+    if (useTexture != 0) {
+        // Canvas/OBJ vs OpenGL: flip both axes so sampling matches the 2D editor.
+        baseColor = texture(diffuseTex, vec2(1.0 - texCoord.x, 1.0 - texCoord.y)).rgb;
+    }
     vec3 color = baseColor * (0.22 + 0.78 * diffuse); // ambient + diffuse
     color += vec3(1.0) * (0.85 * spec);               // glossy white highlight
     color += vec3(1.0, 0.85, 0.95) * (0.18 * rim);    // subtle candy/plastic edge glow

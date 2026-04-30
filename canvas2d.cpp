@@ -114,6 +114,7 @@ void Canvas2D::clearCanvas() {
     m_connectedRegions.clear();
     m_regionToComponent.clear();
     m_activeStroke.reset();
+    m_hasImportedTemplate = false;
     settings.imagePath = "";
     displayImage();
 }
@@ -139,6 +140,7 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
     m_connectedRegions.clear();
     m_regionToComponent.clear();
     m_activeStroke.reset();
+    m_hasImportedTemplate = true;
     displayImage();
     return true;
 }
@@ -440,7 +442,9 @@ void Canvas2D::renderRegion(const Region &region) {
 
     QPainterPath fillPath = makeClosedFillPath(openStroke);
 
-    painter.fillPath(fillPath, kFillColor);
+    if (!m_hasImportedTemplate) {
+        painter.fillPath(fillPath, kFillColor);
+    }
     painter.setPen(QPen(kOutlineColor, 2));
     for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
         painter.drawLine(

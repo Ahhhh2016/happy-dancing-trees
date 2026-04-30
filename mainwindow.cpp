@@ -129,6 +129,15 @@ QString MainWindow::buildMeshAndSaveObj() {
     std::cout << "Mesh written to: "
               << QFileInfo(path).absoluteFilePath().toStdString()
               << std::endl;
+
+    const QString texPath =
+        QFileInfo(path).absolutePath() + QStringLiteral("/mesh12_texture.png");
+    if (!m_canvas->saveImageToFile(texPath)) {
+        std::cerr << "Failed to save texture: " << texPath.toStdString() << std::endl;
+    } else {
+        std::cout << "Texture written to: " << texPath.toStdString() << std::endl;
+    }
+
     m_lastMeshPath = path;
     return path;
 }

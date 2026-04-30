@@ -41,6 +41,9 @@ public:
     // If there are n regions partitioned into m connected components, m_connectedRegions has size m and the union of all inner vectors is {0, ..., n-1}.
     const std::vector<std::vector<int>> &getAllConnectedRegions() const { return m_connectedRegions; }
 
+    /// True after loading an external image; region commits skip gray fill so art stays visible for tracing.
+    bool hasImportedTemplate() const { return m_hasImportedTemplate; }
+
     // Returns the component (list of region indices) containing regionIdx,
     // or an empty vector if regionIdx is not connected to any other region.
     std::vector<int> getConnectedRegions(int regionIdx) const;
@@ -59,6 +62,8 @@ private:
     // Reverse index: m_regionToComponent[r] is the index into
     // m_connectedRegions of the component that contains region r. 
     std::vector<int> m_regionToComponent;
+
+    bool m_hasImportedTemplate = false;
 
     void mouseDown(const QPointF &point);
     void mouseDragged(const QPointF &point);

@@ -5,6 +5,8 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QFileInfo>
+#include <QImage>
+#include <QFile>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -40,7 +42,13 @@ GLWidget::GLWidget(QWidget *parent) :
 
 GLWidget::~GLWidget()
 {
-    if (m_shader != nullptr) delete m_shader;
+    makeCurrent();
+    if (m_shader != nullptr) {
+        delete m_shader;
+        m_shader = nullptr;
+    }
+    m_mesh.destroyGL();
+    doneCurrent();
 }
 
 void GLWidget::setMeshPath(const std::string &path)
@@ -142,19 +150,40 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     }
 
     std::vector<Eigen::Vector3i> triangles;
+    std::vector<Eigen::Vector2f> cornerUVs;
+    const bool hasTexCoords = !attrib.texcoords.empty();
+
+    auto cornerUv = [&](const tinyobj::index_t &idx) -> Eigen::Vector2f {
+        if (hasTexCoords && idx.texcoord_index >= 0) {
+            const int ti = idx.texcoord_index;
+            const size_t o = static_cast<size_t>(ti) * 2;
+            if (o + 1 < attrib.texcoords.size()) {
+                return {static_cast<float>(attrib.texcoords[o]),
+                        static_cast<float>(attrib.texcoords[o + 1])};
+            }
+        }
+        return {0.f, 0.f};
+    };
+
     for (const auto &shape : shapes) {
         size_t index_offset = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             int fv = shape.mesh.num_face_vertices[f];
-            if (fv < 3) { index_offset += fv; continue; }
-
-            int i0 = shape.mesh.indices[index_offset + 0].vertex_index;
-            for (int k = 1; k + 1 < fv; ++k) {
-                int i1 = shape.mesh.indices[index_offset + k].vertex_index;
-                int i2 = shape.mesh.indices[index_offset + k + 1].vertex_index;
-                triangles.emplace_back(i0, i1, i2);
+            if (fv < 3) {
+                index_offset += static_cast<size_t>(fv);
+                continue;
             }
-            index_offset += fv;
+
+            const tinyobj::index_t &i0 = shape.mesh.indices[index_offset + 0];
+            for (int k = 1; k + 1 < fv; ++k) {
+                const tinyobj::index_t &i1 = shape.mesh.indices[index_offset + k];
+                const tinyobj::index_t &i2 = shape.mesh.indices[index_offset + k + 1];
+                triangles.emplace_back(i0.vertex_index, i1.vertex_index, i2.vertex_index);
+                cornerUVs.push_back(cornerUv(i0));
+                cornerUVs.push_back(cornerUv(i1));
+                cornerUVs.push_back(cornerUv(i2));
+            }
+            index_offset += static_cast<size_t>(fv);
         }
     }
 
@@ -177,12 +206,49 @@ void GLWidget::loadMeshFromFile(const std::string &path)
         v = (v - center) * scale;
     }
 
-    m_mesh.init(vertices, triangles);
+    const QFileInfo objFi(QString::fromStdString(path));
+    const QString texPath =
+        objFi.absolutePath() + QLatin1Char('/') + objFi.completeBaseName() + QStringLiteral("_texture.png");
+
+    GLuint texId = 0;
+    if (QFile::exists(texPath)) {
+        QImage img(texPath);
+        if (!img.isNull()) {
+            img = img.convertToFormat(QImage::Format_RGBA8888);
+            glGenTextures(1, &texId);
+            glBindTexture(GL_TEXTURE_2D, texId);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width(), img.height(), 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, img.constBits());
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+
+    const bool textured =
+        (texId != 0 && hasTexCoords && cornerUVs.size() == triangles.size() * 3);
+    if (texId != 0 && !textured) {
+        glDeleteTextures(1, &texId);
+        texId = 0;
+    }
+
+    if (textured) {
+        m_mesh.init(vertices, triangles, cornerUVs, texId);
+    } else {
+        if (texId != 0) {
+            glDeleteTextures(1, &texId);
+        }
+        m_mesh.init(vertices, triangles);
+    }
     m_meshLoaded = true;
 
     std::cout << "Loaded OBJ: " << path
               << "  verts=" << vertices.size()
-              << "  tris="  << triangles.size() << std::endl;
+              << "  tris="  << triangles.size()
+              << "  textured=" << (textured ? "yes" : "no")
+              << std::endl;
 }
 
 // ================== Event Listeners
