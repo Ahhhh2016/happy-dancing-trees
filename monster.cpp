@@ -188,10 +188,23 @@ std::vector<Eigen::Vector2f> monster::getMergingBoundaryPoints(const Region& reg
     return {};
 }
 
-MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                         const std::vector<bool>& isDirichletIn,
-                         int depthOrder,
-                         const std::vector<bool>& isMergingIn) {
+MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2,
+                                  const Eigen::MatrixXi& F2,
+                                  const std::vector<bool>& isDirichletIn,
+                                  int depthOrder,
+                                  const std::vector<bool>& isMergingIn) {
+    // guard against size mismatch
+    if (isDirichletIn.size() != (size_t)V2.rows()) {
+        std::cout << "createFrontBack: isDirichlet size mismatch: "
+                  << isDirichletIn.size() << " vs " << V2.rows() << std::endl;
+        return MeshPart{};
+    }
+    if (!isMergingIn.empty() && isMergingIn.size() != (size_t)V2.rows()) {
+        std::cout << "createFrontBack: isMerging size mismatch: "
+                  << isMergingIn.size() << " vs " << V2.rows() << std::endl;
+        return MeshPart{};
+    }
+
     // Mark the first n vertices as Dirichlet — these are the original boundary
     // points (Dp) that will be pinned to z=0 in the Poisson solve
     std::vector<bool> isDirichlet = isDirichletIn;
@@ -390,7 +403,32 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     Eigen::MatrixXd H(0, 2);
-    igl::triangle::triangulate(V, E, H, "pQa100q20", V2, F2);
+    // deduplicate vertices
+    std::vector<int> vmap(V.rows());
+    std::vector<Eigen::Vector2d> uniqueVerts;
+    for (int i = 0; i < V.rows(); i++) {
+        Eigen::Vector2d p(V(i,0), V(i,1));
+        int found = -1;
+        for (int j = 0; j < (int)uniqueVerts.size(); j++)
+            if ((uniqueVerts[j] - p).norm() < 0.5) { found = j; break; }
+        if (found >= 0) vmap[i] = found;
+        else { vmap[i] = uniqueVerts.size(); uniqueVerts.push_back(p); }
+    }
+    Eigen::MatrixXd Vclean(uniqueVerts.size(), 2);
+    for (int i = 0; i < (int)uniqueVerts.size(); i++) {
+        Vclean(i,0) = uniqueVerts[i].x();
+        Vclean(i,1) = uniqueVerts[i].y();
+    }
+    for (int i = 0; i < E.rows(); i++) {
+        E(i,0) = vmap[E(i,0)];
+        E(i,1) = vmap[E(i,1)];
+    }
+    Eigen::MatrixXi Eclean(E.rows(), 2);
+    int eCount = 0;
+    for (int i = 0; i < E.rows(); i++)
+        if (E(i,0) != E(i,1)) Eclean.row(eCount++) = E.row(i);
+    Eclean.conservativeResize(eCount, 2);
+    igl::triangle::triangulate(Vclean, Eclean, H, "pQa100q20", V2, F2);
 }
 
 StitchedMesh monster::stitchParts() {
@@ -624,8 +662,14 @@ Eigen::VectorXd monster::solvePoisson(const Eigen::SparseMatrix<double>& L, cons
     Eigen::VectorXd Beq;
 
     Eigen::VectorXd h_tilde;
-    igl::min_quad_with_fixed(L, rhs, b, bc, Aeq, Beq, /*pd=*/true, h_tilde);
+    igl::min_quad_with_fixed(L, rhs, b, bc, Aeq, Beq, /*pd=*/false, h_tilde);
+
+    if (h_tilde.rows() == 0) {
+        std::cout << "solvePoisson failed! Returning zeros." << std::endl;
+        h_tilde = Eigen::VectorXd::Zero(rhs.rows());
+    }
     return h_tilde;
+
 }
 
 Eigen::VectorXd monster::toSemiElliptical(const Eigen::VectorXd& h_tilde, const std::vector<bool>& isFront) {
@@ -650,10 +694,22 @@ void monster::inflateMesh(
         V3 << V, Eigen::VectorXd::Zero(V.rows());
         V = V3;
     }
-    auto L       = buildCotangentLaplacian(V, F);
-    auto a       = buildMass(V, F);
-    auto rhs     = buildRHS(a, isFront, c);
+    auto L = buildCotangentLaplacian(V, F);
+    std::cout << "L: " << L.rows() << "x" << L.cols() << std::endl;
+
+    auto a = buildMass(V, F);
+    std::cout << "a: " << a.rows() << "x" << a.cols() << std::endl;
+
+    auto rhs = buildRHS(a, isFront, c);
+    std::cout << "rhs: " << rhs.rows() << std::endl;
+
     auto h_tilde = solvePoisson(L, rhs, isDirichlet);
-    auto h0      = toSemiElliptical(h_tilde, isFront);
+    std::cout << "h_tilde: " << h_tilde.rows() << std::endl;
+
+    auto h0 = toSemiElliptical(h_tilde, isFront);
+    std::cout << "h0: " << h0.rows() << std::endl;
+
+    std::cout << "V rows: " << V.rows() << std::endl;
+
     for (int i = 0; i < V.rows(); ++i) V(i, 2) = h0(i); 
 }
