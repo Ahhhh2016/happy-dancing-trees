@@ -2,6 +2,7 @@
 #define CANVAS2D_H
 
 #include <QLabel>
+#include <QColor>
 #include <QMouseEvent>
 #include <array>
 #include <chrono>
@@ -16,7 +17,7 @@ class QPaintEvent;
 class Canvas2D : public QLabel {
     Q_OBJECT
 public:
-    enum class Tool { Brush, Eraser };
+    enum class Tool { Brush, Eraser, Paint, PaintEraser };
 
     int m_width = 0;
     int m_height = 0;
@@ -27,8 +28,14 @@ public:
     void setTool(Tool t);
     Tool tool() const { return m_tool; }
 
+    void setPaintColor(const QColor &c);
+    QColor paintColor() const { return m_paintColor; }
+    void setPaintBrushRadius(float radius);
+    float paintBrushRadius() const { return m_paintBrushRadius; }
+
     void init();
-    void clearCanvas();
+    /// @param notifyMeshPreview when false, skip meshPreviewDirty (e.g. startup init).
+    void clearCanvas(bool notifyMeshPreview = true);
     bool loadImageFromFile(const QString &file);
     bool saveImageToFile(const QString &file);
     /// Writes pixels for 3D texturing: imported template + region fills, never stroke outlines.
@@ -55,10 +62,21 @@ public:
     // or an empty vector if regionIdx is not connected to any other region.
     std::vector<int> getConnectedRegions(int regionIdx) const;
 
+signals:
+    /// Emitted when 2D content that affects the 3D mesh/texture has changed.
+    void meshPreviewDirty();
+
 private:
     std::vector<RGBA> m_data;
     /// Same dimensions as m_data; used only when exporting mesh textures (no black strokes).
     std::vector<RGBA> m_textureNoStroke;
+    /// Freehand paint (composited above region fills, below vector stroke outlines on screen).
+    std::vector<RGBA> m_paintLayer;
+    /// Black outline polylines only (composited last so paint stays visible under strokes).
+    std::vector<RGBA> m_strokeOverlay;
+    QColor m_paintColor = Qt::black;
+    float m_paintBrushRadius = 8.0f;
+    std::optional<QPointF> m_paintDragLast;
     std::vector<Stroke> m_strokes; // Only contains user drawn Dp
     std::vector<Region> m_regions; // Contains all the regions, and in boundaries containing closing curves
     std::optional<Stroke> m_activeStroke; // Currently active stroke being drawn
@@ -111,6 +129,8 @@ private:
     QImage makeImageFromTextureNoStrokeData() const;
     void loadCanvasDataFromImage(const QImage &image);
     void loadTextureNoStrokeFromImage(const QImage &image);
+    QImage makeImageFromStrokeOverlayData() const;
+    void loadStrokeOverlayFromImage(const QImage &image);
     void renderRegion(const Region &region, bool updateDisplay = true);
     void paintStrokePreview(QPainter &painter, const Stroke &stroke) const;
 
@@ -120,6 +140,16 @@ private:
     bool regionsOverlap(const Region &a, const Region &b) const;
     void recomputeConnectedComponents();
     void rebuildCanvasFromRegions();
+
+    void ensurePaintLayerAllocated();
+    void ensureStrokeOverlayAllocated();
+    static RGBA blendSourceOver(const RGBA &dst, const RGBA &src);
+    void stampBrushAt(const QPointF &p);
+    void paintSegment(const QPointF &a, const QPointF &b);
+    void erasePaintAt(const QPointF &p);
+    void erasePaintSegment(const QPointF &a, const QPointF &b);
+    std::vector<RGBA> compositeForDisplay() const;
+    std::vector<RGBA> compositeMeshTexture() const;
 };
 
 #endif // CANVAS2D_H

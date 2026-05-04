@@ -8,9 +8,12 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QBoxLayout>
-#include <QStackedWidget>
+#include <QSplitter>
 #include <QPointer>
 #include <QButtonGroup>
+#include <QFrame>
+#include <QTimer>
+#include <QList>
 
 #include "canvas2d.h"
 #include "glwidget.h"
@@ -31,33 +34,29 @@ private:
 
 private slots:
     void onClearButtonClick();
-    void onRevertButtonClick();
     void onUploadButtonClick();
     void onSaveButtonClick();
-    void onToggleMeshViewClick();
-    void onMeshResolutionSliderChanged(int value);
     void onMeshResolutionSliderReleased();
 
 private:
-    // Runs the mesh inflation pipeline; returns the path to the written OBJ,
-    // or an empty string on failure.
-    QString buildMeshAndSaveObj();
     double maxTriangleAreaFromSlider() const;
-    void updateMeshResolutionLabel();
+    void requestAsyncMeshRebuildIfIdle();
     void startAsyncSliderMeshRebuild();
     void finishAsyncSliderMeshRebuild();
+    void applyCanvasViewMode();
+    void applyAnimationViewMode();
 
 private:
     QString          m_lastMeshPath;
-    QStackedWidget  *m_viewStack;
-    int              m_canvasPageIndex;
-    int              m_meshPageIndex;
-    QPushButton     *m_toggleMeshButton;
+    QSplitter       *m_mainSplitter;
     QSlider         *m_meshResolutionSlider;
-    QLabel          *m_meshResolutionLabel;
     QRadioButton    *m_brushToolRadio;
+    QFrame          *m_paintColorSwatch;
+    QSlider         *m_paintRadiusSlider;
     GLWidget        *m_glWidget;
     bool             m_sliderMeshRebuildBusy = false;
     bool             m_sliderMeshRebuildPending = false;
+    QTimer           m_meshPreviewDebounceTimer;
+    QList<int>       m_cachedSplitterSizes;
 };
 #endif // MAINWINDOW_H

@@ -1,6 +1,7 @@
 #include "canvas2d.h"
 #include <QPainter>
 #include <QPainterPath>
+#include <QColor>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QCursor>
@@ -130,22 +131,174 @@ float pointToSegmentDistSq(const Eigen::Vector2f &p,
 
 void Canvas2D::setTool(Tool t) {
     m_tool = t;
-    if (t == Tool::Eraser)
+    m_paintDragLast.reset();
+    if (t == Tool::Eraser) {
         setCursor(Qt::CrossCursor);
-    else
+    } else if (t == Tool::PaintEraser) {
+        setCursor(Qt::ArrowCursor);
+    } else {
         unsetCursor();
+    }
+}
+
+void Canvas2D::setPaintColor(const QColor &c) {
+    m_paintColor = c;
+}
+
+void Canvas2D::setPaintBrushRadius(float radius) {
+    m_paintBrushRadius = std::clamp(radius, 1.5f, 80.0f);
+}
+
+RGBA Canvas2D::blendSourceOver(const RGBA &dst, const RGBA &src) {
+    if (src.a == 0) {
+        return dst;
+    }
+    const double sa = static_cast<double>(src.a) / 255.0;
+    const double inv = 1.0 - sa;
+    const double da = static_cast<double>(dst.a) / 255.0;
+    RGBA o;
+    o.r = static_cast<std::uint8_t>(
+        std::clamp(std::lround(static_cast<double>(src.r) * sa + static_cast<double>(dst.r) * da * inv), 0L, 255L));
+    o.g = static_cast<std::uint8_t>(
+        std::clamp(std::lround(static_cast<double>(src.g) * sa + static_cast<double>(dst.g) * da * inv), 0L, 255L));
+    o.b = static_cast<std::uint8_t>(
+        std::clamp(std::lround(static_cast<double>(src.b) * sa + static_cast<double>(dst.b) * da * inv), 0L, 255L));
+    o.a = static_cast<std::uint8_t>(
+        std::clamp(std::lround(255.0 * (sa + da * inv)), 0L, 255L));
+    return o;
+}
+
+void Canvas2D::ensurePaintLayerAllocated() {
+    const std::size_t n = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
+    if (m_paintLayer.size() != n) {
+        m_paintLayer.assign(n, RGBA(0, 0, 0, 0));
+    }
+}
+
+void Canvas2D::ensureStrokeOverlayAllocated() {
+    const std::size_t n = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height);
+    if (m_strokeOverlay.size() != n) {
+        m_strokeOverlay.assign(n, RGBA(0, 0, 0, 0));
+    }
+}
+
+void Canvas2D::stampBrushAt(const QPointF &p) {
+    ensurePaintLayerAllocated();
+    if (m_paintColor.alpha() == 0) {
+        return;
+    }
+    const RGBA brush{
+        static_cast<std::uint8_t>(m_paintColor.red()),
+        static_cast<std::uint8_t>(m_paintColor.green()),
+        static_cast<std::uint8_t>(m_paintColor.blue()),
+        static_cast<std::uint8_t>(m_paintColor.alpha())};
+    const float r = m_paintBrushRadius;
+    const int r0 = static_cast<int>(std::ceil(static_cast<double>(r)));
+    const int cx = static_cast<int>(std::floor(p.x()));
+    const int cy = static_cast<int>(std::floor(p.y()));
+    const float px = static_cast<float>(p.x());
+    const float py = static_cast<float>(p.y());
+    const float r2 = r * r;
+    for (int y = cy - r0; y <= cy + r0; ++y) {
+        for (int x = cx - r0; x <= cx + r0; ++x) {
+            if (x < 0 || x >= m_width || y < 0 || y >= m_height) {
+                continue;
+            }
+            const float dx = (static_cast<float>(x) + 0.5f) - px;
+            const float dy = (static_cast<float>(y) + 0.5f) - py;
+            if (dx * dx + dy * dy > r2) {
+                continue;
+            }
+            const std::size_t idx = static_cast<std::size_t>(y * m_width + x);
+            m_paintLayer[idx] = blendSourceOver(m_paintLayer[idx], brush);
+        }
+    }
+}
+
+void Canvas2D::paintSegment(const QPointF &a, const QPointF &b) {
+    const float dx = static_cast<float>(b.x() - a.x());
+    const float dy = static_cast<float>(b.y() - a.y());
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    const float step = std::max(1.0f, m_paintBrushRadius * 0.38f);
+    const int n = std::max(1, static_cast<int>(std::ceil(dist / step)));
+    for (int i = 1; i <= n; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(n);
+        stampBrushAt(a + (b - a) * t);
+    }
+}
+
+void Canvas2D::erasePaintAt(const QPointF &p) {
+    ensurePaintLayerAllocated();
+    const float r = m_paintBrushRadius;
+    const int r0 = static_cast<int>(std::ceil(static_cast<double>(r)));
+    const int cx = static_cast<int>(std::floor(p.x()));
+    const int cy = static_cast<int>(std::floor(p.y()));
+    const float px = static_cast<float>(p.x());
+    const float py = static_cast<float>(p.y());
+    const float r2 = r * r;
+    for (int y = cy - r0; y <= cy + r0; ++y) {
+        for (int x = cx - r0; x <= cx + r0; ++x) {
+            if (x < 0 || x >= m_width || y < 0 || y >= m_height) {
+                continue;
+            }
+            const float dx = (static_cast<float>(x) + 0.5f) - px;
+            const float dy = (static_cast<float>(y) + 0.5f) - py;
+            if (dx * dx + dy * dy > r2) {
+                continue;
+            }
+            const std::size_t idx = static_cast<std::size_t>(y * m_width + x);
+            m_paintLayer[idx] = RGBA(0, 0, 0, 0);
+        }
+    }
+}
+
+void Canvas2D::erasePaintSegment(const QPointF &a, const QPointF &b) {
+    const float dx = static_cast<float>(b.x() - a.x());
+    const float dy = static_cast<float>(b.y() - a.y());
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    const float step = std::max(1.0f, m_paintBrushRadius * 0.38f);
+    const int n = std::max(1, static_cast<int>(std::ceil(dist / step)));
+    for (int i = 1; i <= n; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(n);
+        erasePaintAt(a + (b - a) * t);
+    }
+}
+
+std::vector<RGBA> Canvas2D::compositeForDisplay() const {
+    std::vector<RGBA> out(m_data.size());
+    const std::size_t plen = m_paintLayer.size();
+    const std::size_t slen = m_strokeOverlay.size();
+    for (std::size_t i = 0; i < m_data.size(); ++i) {
+        const RGBA paint = (i < plen) ? m_paintLayer[i] : RGBA(0, 0, 0, 0);
+        const RGBA stroke = (i < slen) ? m_strokeOverlay[i] : RGBA(0, 0, 0, 0);
+        const RGBA withPaint = blendSourceOver(m_data[i], paint);
+        out[i] = blendSourceOver(withPaint, stroke);
+    }
+    return out;
+}
+
+std::vector<RGBA> Canvas2D::compositeMeshTexture() const {
+    std::vector<RGBA> out(m_textureNoStroke.size());
+    const std::size_t plen = m_paintLayer.size();
+    for (std::size_t i = 0; i < m_textureNoStroke.size(); ++i) {
+        const RGBA paint = (i < plen) ? m_paintLayer[i] : RGBA{0, 0, 0, 0};
+        out[i] = blendSourceOver(m_textureNoStroke[i], paint);
+    }
+    return out;
 }
 
 void Canvas2D::init() {
     setMouseTracking(true);
     m_width = 500;
     m_height = 500;
-    clearCanvas();
+    clearCanvas(false);
 }
 
-void Canvas2D::clearCanvas() {
+void Canvas2D::clearCanvas(bool notifyMeshPreview) {
     m_data.assign(m_width * m_height, RGBA{255, 255, 255, 255});
     m_textureNoStroke = m_data;
+    m_paintLayer.assign(static_cast<std::size_t>(m_width * m_height), RGBA(0, 0, 0, 0));
+    m_strokeOverlay.assign(static_cast<std::size_t>(m_width * m_height), RGBA(0, 0, 0, 0));
     m_strokes.clear();
     m_regions.clear();
     m_connectedRegions.clear();
@@ -154,6 +307,9 @@ void Canvas2D::clearCanvas() {
     m_hasImportedTemplate = false;
     settings.imagePath = "";
     displayImage();
+    if (notifyMeshPreview) {
+        emit meshPreviewDirty();
+    }
 }
 
 bool Canvas2D::loadImageFromFile(const QString &file) {
@@ -184,15 +340,20 @@ bool Canvas2D::loadImageFromFile(const QString &file) {
     m_connectedRegions.clear();
     m_regionToComponent.clear();
     m_activeStroke.reset();
+    m_paintLayer.assign(static_cast<std::size_t>(m_width * m_height), RGBA(0, 0, 0, 0));
+    m_strokeOverlay.assign(static_cast<std::size_t>(m_width * m_height), RGBA(0, 0, 0, 0));
     m_hasImportedTemplate = true;
     displayImage();
+    emit meshPreviewDirty();
     return true;
 }
 
 bool Canvas2D::saveImageToFile(const QString &file) {
+    const std::vector<RGBA> comp = compositeForDisplay();
     QImage myImage = QImage(m_width, m_height, QImage::Format_RGBX8888);
-    for (int i = 0; i < m_data.size(); i++){
-        myImage.setPixelColor(i % m_width, i / m_width, QColor(m_data[i].r, m_data[i].g, m_data[i].b, m_data[i].a));
+    for (int i = 0; i < static_cast<int>(comp.size()); ++i) {
+        const RGBA &p = comp[static_cast<std::size_t>(i)];
+        myImage.setPixelColor(i % m_width, i / m_width, QColor(p.r, p.g, p.b, p.a));
     }
     if (!myImage.save(file)) {
         std::cout<<"Failed to save image"<<std::endl;
@@ -206,9 +367,11 @@ bool Canvas2D::saveMeshTextureToFile(const QString &file) {
         std::cout << "Mesh texture buffer size mismatch" << std::endl;
         return false;
     }
+    ensurePaintLayerAllocated();
+    const std::vector<RGBA> comp = compositeMeshTexture();
     QImage myImage = QImage(m_width, m_height, QImage::Format_RGBX8888);
-    for (int i = 0; i < static_cast<int>(m_textureNoStroke.size()); ++i) {
-        const RGBA &p = m_textureNoStroke[static_cast<std::size_t>(i)];
+    for (int i = 0; i < static_cast<int>(comp.size()); ++i) {
+        const RGBA &p = comp[static_cast<std::size_t>(i)];
         myImage.setPixelColor(i % m_width, i / m_width, QColor(p.r, p.g, p.b, p.a));
     }
     if (!myImage.save(file)) {
@@ -219,8 +382,11 @@ bool Canvas2D::saveMeshTextureToFile(const QString &file) {
 }
 
 void Canvas2D::displayImage() {
-    QByteArray img(reinterpret_cast<const char *>(m_data.data()), 4 * m_data.size());
-    QImage now = QImage((const uchar*)img.data(), m_width, m_height, QImage::Format_RGBX8888);
+    ensurePaintLayerAllocated();
+    ensureStrokeOverlayAllocated();
+    const std::vector<RGBA> comp = compositeForDisplay();
+    QByteArray img(reinterpret_cast<const char *>(comp.data()), static_cast<int>(4 * comp.size()));
+    QImage now = QImage((const uchar *)img.data(), m_width, m_height, QImage::Format_RGBX8888);
     setPixmap(QPixmap::fromImage(now));
     setFixedSize(m_width, m_height);
     update();
@@ -231,6 +397,8 @@ void Canvas2D::resize(int w, int h) {
     m_height = h;
     m_data.resize(static_cast<std::size_t>(w * h));
     m_textureNoStroke.resize(static_cast<std::size_t>(w * h));
+    m_paintLayer.assign(static_cast<std::size_t>(w * h), RGBA(0, 0, 0, 0));
+    m_strokeOverlay.assign(static_cast<std::size_t>(w * h), RGBA(0, 0, 0, 0));
     displayImage();
 }
 
@@ -422,6 +590,7 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     }
 
     renderRegion(region);
+    emit meshPreviewDirty();
 }
 
 float Canvas2D::pointToPolylineDistSq(const Eigen::Vector2f &p, const Stroke &stroke) const {
@@ -510,6 +679,7 @@ void Canvas2D::rebuildCanvasFromRegions() {
         m_data.assign(static_cast<std::size_t>(m_width * m_height), RGBA{255, 255, 255, 255});
         m_textureNoStroke = m_data;
     }
+    m_strokeOverlay.assign(static_cast<std::size_t>(m_width * m_height), RGBA(0, 0, 0, 0));
 
     std::vector<int> order(static_cast<std::size_t>(m_regions.size()));
     std::iota(order.begin(), order.end(), 0);
@@ -531,6 +701,7 @@ void Canvas2D::eraseStrokeAtIndex(int strokeIdx) {
     m_regions.erase(m_regions.begin() + strokeIdx);
     recomputeConnectedComponents();
     rebuildCanvasFromRegions();
+    emit meshPreviewDirty();
 }
 
 QImage Canvas2D::makeImageFromCanvasData() const {
@@ -624,6 +795,34 @@ void Canvas2D::loadTextureNoStrokeFromImage(const QImage &image) {
     }
 }
 
+QImage Canvas2D::makeImageFromStrokeOverlayData() const {
+    // ARGB32 preserves alpha. RGBX8888 discards alpha so (0,0,0,0) becomes opaque black and blacks out the canvas.
+    QImage image(m_width, m_height, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    const int n = m_width * m_height;
+    for (int i = 0; i < n; ++i) {
+        if (i >= static_cast<int>(m_strokeOverlay.size())) {
+            continue;
+        }
+        const RGBA &p = m_strokeOverlay[static_cast<std::size_t>(i)];
+        image.setPixelColor(i % m_width, i / m_width, QColor(p.r, p.g, p.b, p.a));
+    }
+    return image;
+}
+
+void Canvas2D::loadStrokeOverlayFromImage(const QImage &image) {
+    QImage converted = image.convertToFormat(QImage::Format_ARGB32);
+    m_strokeOverlay.resize(static_cast<std::size_t>(m_width * m_height));
+    int idx = 0;
+    for (int y = 0; y < m_height; ++y) {
+        for (int x = 0; x < m_width; ++x) {
+            const QColor c = converted.pixelColor(x, y);
+            m_strokeOverlay[static_cast<std::size_t>(idx++)] =
+                RGBA(c.red(), c.green(), c.blue(), c.alpha());
+        }
+    }
+}
+
 void Canvas2D::renderRegion(const Region &region, bool updateDisplay) {
     if (region.boundaries.empty()) {
         return;
@@ -643,16 +842,24 @@ void Canvas2D::renderRegion(const Region &region, bool updateDisplay) {
     if (!m_hasImportedTemplate) {
         painter.fillPath(fillPath, kFillColor);
     }
-    painter.setPen(QPen(kOutlineColor, 2));
-    for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
-        painter.drawLine(
-            toQPointF(openStroke.points[i - 1]),
-            toQPointF(openStroke.points[i])
-        );
-    }
 
     painter.end();
     loadCanvasDataFromImage(image);
+
+    {
+        ensureStrokeOverlayAllocated();
+        QImage strokeImage = makeImageFromStrokeOverlayData();
+        QPainter strokePainter(&strokeImage);
+        strokePainter.setRenderHint(QPainter::Antialiasing, true);
+        strokePainter.setPen(QPen(kOutlineColor, 2));
+        for (std::size_t i = 1; i < openStroke.points.size(); ++i) {
+            strokePainter.drawLine(
+                toQPointF(openStroke.points[i - 1]),
+                toQPointF(openStroke.points[i]));
+        }
+        strokePainter.end();
+        loadStrokeOverlayFromImage(strokeImage);
+    }
 
     {
         QImage texImage = makeImageFromTextureNoStrokeData();
@@ -682,30 +889,68 @@ void Canvas2D::mouseDown(const QPointF &point) {
         update();
         return;
     }
+    if (m_tool == Tool::Paint) {
+        m_isDown = true;
+        m_paintDragLast = point;
+        stampBrushAt(point);
+        displayImage();
+        return;
+    }
+    if (m_tool == Tool::PaintEraser) {
+        m_isDown = true;
+        m_paintDragLast = point;
+        erasePaintAt(point);
+        displayImage();
+        return;
+    }
     beginStroke(point);
     m_isDown = true;
     update();
 }
 
 void Canvas2D::mouseDragged(const QPointF &point) {
-    if (isInsideCanvas(point, m_width, m_height) && m_isDown)
-    {
-        if (!m_activeStroke.has_value() || m_activeStroke->points.empty()) {
-            return;
-        }
-        appendPointToActiveStroke(point);
-        update();
+    if (!isInsideCanvas(point, m_width, m_height) || !m_isDown) {
+        return;
     }
+    if (m_tool == Tool::Paint) {
+        if (m_paintDragLast.has_value()) {
+            paintSegment(*m_paintDragLast, point);
+        } else {
+            stampBrushAt(point);
+        }
+        m_paintDragLast = point;
+        displayImage();
+        return;
+    }
+    if (m_tool == Tool::PaintEraser) {
+        if (m_paintDragLast.has_value()) {
+            erasePaintSegment(*m_paintDragLast, point);
+        } else {
+            erasePaintAt(point);
+        }
+        m_paintDragLast = point;
+        displayImage();
+        return;
+    }
+    if (!m_activeStroke.has_value() || m_activeStroke->points.empty()) {
+        return;
+    }
+    appendPointToActiveStroke(point);
+    update();
 }
 
 void Canvas2D::mouseUp(const QPointF &point) {
-    if (m_isDown && isInsideCanvas(point, m_width, m_height)) {
+    if (m_isDown && m_tool == Tool::Brush && isInsideCanvas(point, m_width, m_height)) {
         appendPointToActiveStroke(point);
     }
 
     m_isDown = false;
+    m_paintDragLast.reset();
     if (m_tool == Tool::Brush) {
         finishStroke();
+    }
+    if (m_tool == Tool::Paint || m_tool == Tool::PaintEraser) {
+        emit meshPreviewDirty();
     }
     update();
 }

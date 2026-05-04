@@ -25,6 +25,10 @@ public:
 
     // Queue an OBJ to display. If GL is already initialized, loads immediately.
     void setMeshPath(const std::string &path);
+    // Remove any currently displayed mesh and clear the viewport.
+    void clearMesh();
+    // Reset the camera to the default centered framing.
+    void centerView();
 
 private:
     static const int FRAMES_TO_AVERAGE = 30;

@@ -62,6 +62,27 @@ void GLWidget::setMeshPath(const std::string &path)
     }
 }
 
+void GLWidget::clearMesh()
+{
+    m_pendingMeshPath.clear();
+    if (m_glInitialized) {
+        makeCurrent();
+        m_mesh.destroyGL();
+        doneCurrent();
+    }
+    m_meshLoaded = false;
+    update();
+}
+
+void GLWidget::centerView()
+{
+    const Eigen::Vector3f eye(0.f, 0.f, -5.f);
+    const Eigen::Vector3f target(0.f, 0.f, 0.f);
+    m_camera.lookAt(eye, target);
+    m_camera.setOrbitPoint(target);
+    update();
+}
+
 // ================== Basic OpenGL Overrides
 
 void GLWidget::initializeGL()
@@ -83,9 +104,9 @@ void GLWidget::initializeGL()
     // Initialize the shader
     m_shader = new Shader(":/resources/shaders/shader.vert", ":/resources/shaders/shader.frag");
 
-    // Initialize camera with a reasonable transform
-    Eigen::Vector3f eye    = {0, 2, -5};
-    Eigen::Vector3f target = {0, 1,  0};
+    // Initialize camera aimed at origin so newly loaded meshes appear centered.
+    Eigen::Vector3f eye    = {0, 0, -5};
+    Eigen::Vector3f target = {0, 0,  0};
     m_camera.lookAt(eye, target);
     m_camera.setOrbitPoint(target);
     m_camera.setPerspective(120, width() / static_cast<float>(height()), 0.1, 50);

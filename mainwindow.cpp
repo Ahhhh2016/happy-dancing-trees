@@ -14,19 +14,21 @@
 #include <QLabel>
 #include <QGroupBox>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QMessageBox>
+#include <QFrame>
+#include <QColorDialog>
 #include <iostream>
 
 MainWindow::MainWindow()
     : m_canvas(nullptr),
-      m_viewStack(nullptr),
-      m_canvasPageIndex(-1),
-      m_meshPageIndex(-1),
-      m_toggleMeshButton(nullptr),
+      m_mainSplitter(nullptr),
       m_meshResolutionSlider(nullptr),
-      m_meshResolutionLabel(nullptr),
       m_brushToolRadio(nullptr),
-      m_glWidget(nullptr)
+      m_paintColorSwatch(nullptr),
+      m_paintRadiusSlider(nullptr),
+      m_glWidget(nullptr),
+      m_meshPreviewDebounceTimer(this)
 {
     setWindowTitle("2D Projects");
 
@@ -41,21 +43,32 @@ MainWindow::MainWindow()
     setLayout(hLayout);
 
     setupCanvas2D();
-    resize(800, 600);
+    m_meshPreviewDebounceTimer.setSingleShot(true);
+    m_meshPreviewDebounceTimer.setInterval(180);
+    connect(&m_meshPreviewDebounceTimer, &QTimer::timeout,
+            this, &MainWindow::requestAsyncMeshRebuildIfIdle);
+    connect(m_canvas, &Canvas2D::meshPreviewDirty, this, [this]() {
+        m_meshPreviewDebounceTimer.start();
+    });
+    resize(1100, 600);
 
-    // Main viewing area: swap between the 2D canvas and the 3D mesh viewer.
-    m_viewStack = new QStackedWidget();
+    // Split view: 2D canvas and 3D mesh visible together (draggable divider).
+    m_mainSplitter = new QSplitter(Qt::Horizontal);
 
-    QScrollArea *scrollArea = new QScrollArea();
+    auto *scrollArea = new QScrollArea();
     scrollArea->setWidget(m_canvas);
     scrollArea->setWidgetResizable(true);
-    m_canvasPageIndex = m_viewStack->addWidget(scrollArea);
 
     m_glWidget = new GLWidget();
-    m_meshPageIndex = m_viewStack->addWidget(m_glWidget);
 
-    m_viewStack->setCurrentIndex(m_canvasPageIndex);
-    hLayout->addWidget(m_viewStack, 1);
+    m_mainSplitter->addWidget(scrollArea);
+    m_mainSplitter->addWidget(m_glWidget);
+    m_mainSplitter->setStretchFactor(0, 1);
+    m_mainSplitter->setStretchFactor(1, 1);
+    m_mainSplitter->setSizes({550, 550});
+    m_cachedSplitterSizes = m_mainSplitter->sizes();
+
+    hLayout->addWidget(m_mainSplitter, 1);
 
     QWidget *brushGroup = new QWidget();
     QVBoxLayout *brushLayout = new QVBoxLayout();
@@ -67,17 +80,63 @@ MainWindow::MainWindow()
     controlsScroll->setWidgetResizable(true);
 
     vLayout->addWidget(controlsScroll);
+    addPushButton(brushLayout, "Load Image", &MainWindow::onUploadButtonClick);
+    addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
+
+
+    brushLayout->addWidget(new QLabel(tr("View:")));
+    auto *viewGroup = new QButtonGroup(this);
+    QRadioButton *canvasViewRadio = new QRadioButton(tr("Canvas view"));
+    QRadioButton *animationViewRadio = new QRadioButton(tr("Animation view"));
+    canvasViewRadio->setToolTip(
+        tr("2D canvas and 3D mesh together (draggable divider)."));
+    animationViewRadio->setToolTip(tr("3D view only, full width."));
+    viewGroup->addButton(canvasViewRadio);
+    viewGroup->addButton(animationViewRadio);
+    viewGroup->setExclusive(true);
+    canvasViewRadio->setChecked(true);
+    brushLayout->addWidget(canvasViewRadio);
+    brushLayout->addWidget(animationViewRadio);
+    QPushButton *center3DButton = new QPushButton(tr("Center 3D view"));
+    center3DButton->setToolTip(tr("Reset camera to the default centered mesh view."));
+    brushLayout->addWidget(center3DButton);
+    connect(canvasViewRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            applyCanvasViewMode();
+        }
+    });
+    connect(animationViewRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            applyAnimationViewMode();
+        }
+    });
+    connect(center3DButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->centerView();
+            m_glWidget->setFocus(Qt::OtherFocusReason);
+        }
+    });
 
     brushLayout->addWidget(new QLabel(tr("Draw tool:")));
     auto *toolGroup = new QButtonGroup(this);
-    m_brushToolRadio = new QRadioButton(tr("Brush"));
-    QRadioButton *eraserRadio = new QRadioButton(tr("Eraser (click stroke)"));
+    m_brushToolRadio = new QRadioButton(tr("Pen"));
+    QRadioButton *paintRadio = new QRadioButton(tr("Paint"));
+    brushLayout->addWidget(m_brushToolRadio);
+    brushLayout->addWidget(paintRadio);
+
+    brushLayout->addWidget(new QLabel(tr("Erase tool:")));
+    QRadioButton *eraserRadio = new QRadioButton(tr("Pen (stroke)"));
+    QRadioButton *paintEraserRadio = new QRadioButton(tr("Paint (pixels)"));
+    brushLayout->addWidget(eraserRadio);
+    brushLayout->addWidget(paintEraserRadio);
+    paintEraserRadio->setToolTip(
+        tr("Drag to clear painted pixels from the texture layer."));
     m_brushToolRadio->setChecked(true);
     toolGroup->addButton(m_brushToolRadio);
     toolGroup->addButton(eraserRadio);
+    toolGroup->addButton(paintRadio);
+    toolGroup->addButton(paintEraserRadio);
     toolGroup->setExclusive(true);
-    brushLayout->addWidget(m_brushToolRadio);
-    brushLayout->addWidget(eraserRadio);
     connect(m_brushToolRadio, &QRadioButton::toggled, this, [this](bool on) {
         if (on) {
             m_canvas->setTool(Canvas2D::Tool::Brush);
@@ -88,31 +147,70 @@ MainWindow::MainWindow()
             m_canvas->setTool(Canvas2D::Tool::Eraser);
         }
     });
+    connect(paintRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_canvas->setTool(Canvas2D::Tool::Paint);
+        }
+    });
+    connect(paintEraserRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_canvas->setTool(Canvas2D::Tool::PaintEraser);
+        }
+    });
 
-    addPushButton(brushLayout, "Load Image", &MainWindow::onUploadButtonClick);
-    addPushButton(brushLayout, "Revert Image", &MainWindow::onRevertButtonClick);
-    addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
-    addPushButton(brushLayout, "Save Image", &MainWindow::onSaveButtonClick);
+    brushLayout->addWidget(new QLabel(tr("Paint color:")));
+    m_paintColorSwatch = new QFrame();
+    m_paintColorSwatch->setFixedSize(44, 26);
+    m_paintColorSwatch->setFrameShape(QFrame::StyledPanel);
+    auto updatePaintSwatch = [this](const QColor &c) {
+        m_paintColorSwatch->setStyleSheet(
+            QStringLiteral("background-color: rgba(%1,%2,%3,%4); border: 1px solid #888;")
+                .arg(c.red())
+                .arg(c.green())
+                .arg(c.blue())
+                .arg(c.alpha()));
+    };
+    const QColor initialPaint(Qt::black);
+    m_canvas->setPaintColor(initialPaint);
+    updatePaintSwatch(initialPaint);
+    auto *paintColorRow = new QHBoxLayout();
+    paintColorRow->addWidget(m_paintColorSwatch);
+    QPushButton *pickPaintColorButton = new QPushButton(tr("Choose color…"));
+    paintColorRow->addWidget(pickPaintColorButton);
+    paintColorRow->addStretch();
+    brushLayout->addLayout(paintColorRow);
+    connect(pickPaintColorButton, &QPushButton::clicked, this, [this, updatePaintSwatch]() {
+        const QColor c = QColorDialog::getColor(
+            m_canvas->paintColor(),
+            this,
+            tr("Paint color"),
+            QColorDialog::ShowAlphaChannel | QColorDialog::DontUseNativeDialog);
+        if (c.isValid()) {
+            m_canvas->setPaintColor(c);
+            updatePaintSwatch(c);
+        }
+    });
 
-    m_meshResolutionLabel = new QLabel();
+    brushLayout->addWidget(new QLabel(tr("Paint brush size:")));
+    m_paintRadiusSlider = new QSlider(Qt::Horizontal);
+    m_paintRadiusSlider->setRange(2, 40);
+    m_paintRadiusSlider->setValue(8);
+    brushLayout->addWidget(m_paintRadiusSlider);
+    connect(m_paintRadiusSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_canvas->setPaintBrushRadius(static_cast<float>(v));
+    });
+    m_canvas->setPaintBrushRadius(static_cast<float>(m_paintRadiusSlider->value()));
+
     m_meshResolutionSlider = new QSlider(Qt::Horizontal);
     m_meshResolutionSlider->setRange(0, 100);
     m_meshResolutionSlider->setValue(73); // ~same density as former fixed a100
     m_meshResolutionSlider->setToolTip(
         tr("Smaller triangles (right) increase face count and usually smooth the inflated 3D shape."));
-    brushLayout->addWidget(new QLabel(tr("2D triangulation (affects 3D smoothness):")));
+    brushLayout->addWidget(new QLabel(tr("Triangle size (smoothness):")));
     brushLayout->addWidget(m_meshResolutionSlider);
-    brushLayout->addWidget(m_meshResolutionLabel);
-    updateMeshResolutionLabel();
-    connect(m_meshResolutionSlider, &QSlider::valueChanged,
-            this, &MainWindow::onMeshResolutionSliderChanged);
     connect(m_meshResolutionSlider, &QSlider::sliderReleased,
             this, &MainWindow::onMeshResolutionSliderReleased);
-
-    m_toggleMeshButton = new QPushButton("Build && View 3D Mesh");
-    brushLayout->addWidget(m_toggleMeshButton);
-    connect(m_toggleMeshButton, &QPushButton::clicked,
-            this, &MainWindow::onToggleMeshViewClick);
+    addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
 }
 
 void MainWindow::addPushButton(QBoxLayout *layout, QString text,
@@ -134,14 +232,10 @@ void MainWindow::setupCanvas2D() {
 void MainWindow::onClearButtonClick() {
     m_canvas->resize(m_canvas->parentWidget()->size().width(), m_canvas->parentWidget()->size().height());
     m_canvas->clearCanvas();
-    if (m_brushToolRadio) {
-        m_brushToolRadio->setChecked(true);
+    if (m_glWidget) {
+        m_glWidget->clearMesh();
     }
-    m_canvas->setTool(Canvas2D::Tool::Brush);
-}
-
-void MainWindow::onRevertButtonClick() {
-    m_canvas->loadImageFromFile(settings.imagePath);
+    m_lastMeshPath.clear();
     if (m_brushToolRadio) {
         m_brushToolRadio->setChecked(true);
     }
@@ -177,19 +271,11 @@ double MainWindow::maxTriangleAreaFromSlider() const {
     return kCoarse + (kFine - kCoarse) * t;
 }
 
-void MainWindow::updateMeshResolutionLabel() {
-    const double a = maxTriangleAreaFromSlider();
-    m_meshResolutionLabel->setText(
-        tr("Max triangle area: %1 (coarse to fine)").arg(a, 0, 'f', 1));
-}
-
-void MainWindow::onMeshResolutionSliderChanged(int) {
-    updateMeshResolutionLabel();
-}
-
 void MainWindow::onMeshResolutionSliderReleased() {
-    if (m_viewStack->currentIndex() != m_meshPageIndex)
-        return;
+    requestAsyncMeshRebuildIfIdle();
+}
+
+void MainWindow::requestAsyncMeshRebuildIfIdle() {
     if (m_sliderMeshRebuildBusy) {
         m_sliderMeshRebuildPending = true;
         return;
@@ -242,63 +328,30 @@ void MainWindow::finishAsyncSliderMeshRebuild() {
             std::cout << "Texture written to: " << texPath.toStdString() << std::endl;
         }
 
-        if (m_viewStack->currentIndex() == m_meshPageIndex)
-            m_glWidget->setMeshPath(path.toStdString());
+        m_glWidget->setMeshPath(path.toStdString());
         m_lastMeshPath = path;
     }
 
-    if (m_viewStack->currentIndex() != m_meshPageIndex) {
-        m_sliderMeshRebuildPending = false;
-    } else if (m_sliderMeshRebuildPending) {
+    if (m_sliderMeshRebuildPending) {
         m_sliderMeshRebuildPending = false;
         startAsyncSliderMeshRebuild();
     }
 }
 
-QString MainWindow::buildMeshAndSaveObj() {
-    monster m;
-    StitchedMesh mesh = m.buildMesh(
-        m_canvas->getRegions(),
-        static_cast<double>(m_canvas->m_width),
-        static_cast<double>(m_canvas->m_height),
-        maxTriangleAreaFromSlider());
-    // monster::buildMesh currently writes "mesh12.obj" in the cwd.
-    const QString path = "mesh12.obj";
-    if (!QFileInfo::exists(path)) {
-        std::cerr << "Build Mesh did not produce " << path.toStdString() << std::endl;
-        return {};
-    }
-    std::cout << "Mesh written to: "
-              << QFileInfo(path).absoluteFilePath().toStdString()
-              << std::endl;
-
-    const QString texPath =
-        QFileInfo(path).absolutePath() + QStringLiteral("/mesh12_texture.png");
-    if (!m_canvas->saveMeshTextureToFile(texPath)) {
-        std::cerr << "Failed to save texture: " << texPath.toStdString() << std::endl;
+void MainWindow::applyCanvasViewMode() {
+    QWidget *canvasPane = m_mainSplitter->widget(0);
+    canvasPane->setVisible(true);
+    if (m_cachedSplitterSizes.size() == m_mainSplitter->count()) {
+        m_mainSplitter->setSizes(m_cachedSplitterSizes);
     } else {
-        std::cout << "Texture written to: " << texPath.toStdString() << std::endl;
+        m_mainSplitter->setSizes({550, 550});
     }
-
-    m_lastMeshPath = path;
-    return path;
 }
 
-void MainWindow::onToggleMeshViewClick() {
-    const bool showingMesh = (m_viewStack->currentIndex() == m_meshPageIndex);
-
-    if (showingMesh) {
-        m_viewStack->setCurrentIndex(m_canvasPageIndex);
-        m_toggleMeshButton->setText("Build && View 3D Mesh");
-        return;
+void MainWindow::applyAnimationViewMode() {
+    m_cachedSplitterSizes = m_mainSplitter->sizes();
+    m_mainSplitter->widget(0)->setVisible(false);
+    if (m_glWidget) {
+        m_glWidget->setFocus(Qt::OtherFocusReason);
     }
-
-    // Always (re)build from the current canvas state, then display the OBJ.
-    QString path = buildMeshAndSaveObj();
-    if (path.isEmpty()) return;
-
-    m_glWidget->setMeshPath(path.toStdString());
-    m_viewStack->setCurrentIndex(m_meshPageIndex);
-    m_glWidget->setFocus();
-    m_toggleMeshButton->setText("Back to 2D Canvas");
 }
