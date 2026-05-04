@@ -3,9 +3,12 @@
 #include <QPainterPath>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QCursor>
 #include <algorithm>
 #include <iostream>
 #include <cmath>
+#include <numeric>
+#include <queue>
 #include <set>
 #include "settings.h"
 
@@ -110,6 +113,27 @@ RGBA fadeImportedPixelForCanvas(std::uint8_t r, std::uint8_t g, std::uint8_t b, 
     return RGBA{blend(r), blend(g), blend(b), a};
 }
 
+float pointToSegmentDistSq(const Eigen::Vector2f &p,
+                          const Eigen::Vector2f &a,
+                          const Eigen::Vector2f &b) {
+    const Eigen::Vector2f ab = b - a;
+    const float ab2 = ab.squaredNorm();
+    if (ab2 < 1e-12f)
+        return (p - a).squaredNorm();
+    float t = (p - a).dot(ab) / ab2;
+    t = std::clamp(t, 0.0f, 1.0f);
+    const Eigen::Vector2f proj = a + t * ab;
+    return (p - proj).squaredNorm();
+}
+
+}
+
+void Canvas2D::setTool(Tool t) {
+    m_tool = t;
+    if (t == Tool::Eraser)
+        setCursor(Qt::CrossCursor);
+    else
+        unsetCursor();
 }
 
 void Canvas2D::init() {
@@ -260,42 +284,36 @@ void Canvas2D::finishStroke() {
     m_activeStroke.reset();
 }
 
+bool Canvas2D::regionsOverlap(const Region &a, const Region &b) const {
+    if (a.boundaries.empty() || b.boundaries.empty()) {
+        return false;
+    }
+    const QPainterPath pathA = makeClosedFillPath(a.boundaries.front());
+    const QPainterPath pathB = makeClosedFillPath(b.boundaries.front());
+    if (pathA.isEmpty() || pathB.isEmpty()) {
+        return false;
+    }
+    if (!pathA.intersected(pathB).isEmpty()) {
+        return true;
+    }
+    for (const Stroke &ba : a.boundaries) {
+        for (const Stroke &bb : b.boundaries) {
+            if (strokesIntersect(ba, bb)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::vector<int> Canvas2D::findOverlappingRegions(const Region &region) const {
     std::vector<int> overlapping;
     if (region.boundaries.empty()) {
         return overlapping;
     }
 
-    const QPainterPath currentFillPath = makeClosedFillPath(region.boundaries.front());
-    if (currentFillPath.isEmpty()) {
-        return overlapping;
-    }
-
     for (std::size_t idx = 0; idx < m_regions.size(); ++idx) {
-        const Region &existingRegion = m_regions[idx];
-        if (existingRegion.boundaries.empty()) {
-            continue;
-        }
-
-        bool overlaps = false;
-        const QPainterPath existingFillPath = makeClosedFillPath(existingRegion.boundaries.front());
-        if (!currentFillPath.intersected(existingFillPath).isEmpty()) {
-            overlaps = true;
-        } else {
-            for (const Stroke &currentBoundary : region.boundaries) {
-                for (const Stroke &existingBoundary : existingRegion.boundaries) {
-                    if (strokesIntersect(currentBoundary, existingBoundary)) {
-                        overlaps = true;
-                        break;
-                    }
-                }
-                if (overlaps) {
-                    break;
-                }
-            }
-        }
-
-        if (overlaps) {
+        if (regionsOverlap(region, m_regions[idx])) {
             overlapping.push_back(static_cast<int>(idx));
         }
     }
@@ -406,6 +424,115 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     renderRegion(region);
 }
 
+float Canvas2D::pointToPolylineDistSq(const Eigen::Vector2f &p, const Stroke &stroke) const {
+    if (stroke.points.size() < 2) {
+        return std::numeric_limits<float>::infinity();
+    }
+    float best = std::numeric_limits<float>::infinity();
+    for (std::size_t i = 1; i < stroke.points.size(); ++i) {
+        best = std::min(best, pointToSegmentDistSq(p, stroke.points[i - 1], stroke.points[i]));
+    }
+    return best;
+}
+
+int Canvas2D::pickStrokeIndexAt(const Eigen::Vector2f &p, float maxDistPx) const {
+    if (m_strokes.empty()) {
+        return -1;
+    }
+    const float maxSq = maxDistPx * maxDistPx;
+    int best = -1;
+    float bestSq = maxSq;
+    for (std::size_t i = 0; i < m_strokes.size(); ++i) {
+        const float d2 = pointToPolylineDistSq(p, m_strokes[i]);
+        if (d2 <= bestSq) {
+            bestSq = d2;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+void Canvas2D::recomputeConnectedComponents() {
+    const int n = static_cast<int>(m_regions.size());
+    m_connectedRegions.clear();
+    m_regionToComponent.assign(static_cast<std::size_t>(n), -1);
+    if (n == 0) {
+        return;
+    }
+
+    std::vector<std::vector<int>> adj(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            if (regionsOverlap(m_regions[static_cast<std::size_t>(i)], m_regions[static_cast<std::size_t>(j)])) {
+                adj[static_cast<std::size_t>(i)].push_back(j);
+                adj[static_cast<std::size_t>(j)].push_back(i);
+            }
+        }
+    }
+
+    std::vector<bool> vis(static_cast<std::size_t>(n), false);
+    for (int s = 0; s < n; ++s) {
+        if (vis[static_cast<std::size_t>(s)]) {
+            continue;
+        }
+        std::vector<int> comp;
+        std::queue<int> q;
+        q.push(s);
+        vis[static_cast<std::size_t>(s)] = true;
+        while (!q.empty()) {
+            const int u = q.front();
+            q.pop();
+            comp.push_back(u);
+            for (int v : adj[static_cast<std::size_t>(u)]) {
+                if (!vis[static_cast<std::size_t>(v)]) {
+                    vis[static_cast<std::size_t>(v)] = true;
+                    q.push(v);
+                }
+            }
+        }
+        m_connectedRegions.push_back(std::move(comp));
+    }
+
+    for (int ci = 0; ci < static_cast<int>(m_connectedRegions.size()); ++ci) {
+        for (int r : m_connectedRegions[static_cast<std::size_t>(ci)]) {
+            m_regionToComponent[static_cast<std::size_t>(r)] = ci;
+        }
+    }
+}
+
+void Canvas2D::rebuildCanvasFromRegions() {
+    if (m_hasImportedTemplate) {
+        for (int i = 0; i < m_width * m_height; ++i) {
+            const RGBA &t = m_textureNoStroke[static_cast<std::size_t>(i)];
+            m_data[static_cast<std::size_t>(i)] = fadeImportedPixelForCanvas(t.r, t.g, t.b, t.a);
+        }
+    } else {
+        m_data.assign(static_cast<std::size_t>(m_width * m_height), RGBA{255, 255, 255, 255});
+        m_textureNoStroke = m_data;
+    }
+
+    std::vector<int> order(static_cast<std::size_t>(m_regions.size()));
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [this](int a, int b) {
+        return m_regions[static_cast<std::size_t>(a)].depthOrder < m_regions[static_cast<std::size_t>(b)].depthOrder;
+    });
+
+    for (int ri : order) {
+        renderRegion(m_regions[static_cast<std::size_t>(ri)], false);
+    }
+    displayImage();
+}
+
+void Canvas2D::eraseStrokeAtIndex(int strokeIdx) {
+    if (strokeIdx < 0 || strokeIdx >= static_cast<int>(m_strokes.size())) {
+        return;
+    }
+    m_strokes.erase(m_strokes.begin() + strokeIdx);
+    m_regions.erase(m_regions.begin() + strokeIdx);
+    recomputeConnectedComponents();
+    rebuildCanvasFromRegions();
+}
+
 QImage Canvas2D::makeImageFromCanvasData() const {
     QImage image(m_width, m_height, QImage::Format_RGBX8888);
     for (int i = 0; i < static_cast<int>(m_data.size()); ++i) {
@@ -497,7 +624,7 @@ void Canvas2D::loadTextureNoStrokeFromImage(const QImage &image) {
     }
 }
 
-void Canvas2D::renderRegion(const Region &region) {
+void Canvas2D::renderRegion(const Region &region, bool updateDisplay) {
     if (region.boundaries.empty()) {
         return;
     }
@@ -538,16 +665,26 @@ void Canvas2D::renderRegion(const Region &region) {
         loadTextureNoStrokeFromImage(texImage);
     }
 
-    displayImage();
+    if (updateDisplay) {
+        displayImage();
+    }
 }
 
 void Canvas2D::mouseDown(const QPointF &point) {
-    if (isInsideCanvas(point, m_width, m_height))
-    {
-        beginStroke(point);
-        m_isDown = true;
-        update();
+    if (!isInsideCanvas(point, m_width, m_height)) {
+        return;
     }
+    if (m_tool == Tool::Eraser) {
+        const int hit = pickStrokeIndexAt(toVector2D(point), 14.0f);
+        if (hit >= 0) {
+            eraseStrokeAtIndex(hit);
+        }
+        update();
+        return;
+    }
+    beginStroke(point);
+    m_isDown = true;
+    update();
 }
 
 void Canvas2D::mouseDragged(const QPointF &point) {
@@ -567,6 +704,8 @@ void Canvas2D::mouseUp(const QPointF &point) {
     }
 
     m_isDown = false;
-    finishStroke();
+    if (m_tool == Tool::Brush) {
+        finishStroke();
+    }
     update();
 }

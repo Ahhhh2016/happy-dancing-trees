@@ -16,11 +16,16 @@ class QPaintEvent;
 class Canvas2D : public QLabel {
     Q_OBJECT
 public:
+    enum class Tool { Brush, Eraser };
+
     int m_width = 0;
     int m_height = 0;
 
     // Mouse parameters
     bool m_isDown = false;
+
+    void setTool(Tool t);
+    Tool tool() const { return m_tool; }
 
     void init();
     void clearCanvas();
@@ -68,6 +73,7 @@ private:
     std::vector<int> m_regionToComponent;
 
     bool m_hasImportedTemplate = false;
+    Tool m_tool = Tool::Brush;
 
     void mouseDown(const QPointF &point);
     void mouseDragged(const QPointF &point);
@@ -105,8 +111,15 @@ private:
     QImage makeImageFromTextureNoStrokeData() const;
     void loadCanvasDataFromImage(const QImage &image);
     void loadTextureNoStrokeFromImage(const QImage &image);
-    void renderRegion(const Region &region);
+    void renderRegion(const Region &region, bool updateDisplay = true);
     void paintStrokePreview(QPainter &painter, const Stroke &stroke) const;
+
+    float pointToPolylineDistSq(const Eigen::Vector2f &p, const Stroke &stroke) const;
+    int pickStrokeIndexAt(const Eigen::Vector2f &p, float maxDistPx) const;
+    void eraseStrokeAtIndex(int strokeIdx);
+    bool regionsOverlap(const Region &a, const Region &b) const;
+    void recomputeConnectedComponents();
+    void rebuildCanvasFromRegions();
 };
 
 #endif // CANVAS2D_H

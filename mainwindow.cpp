@@ -25,6 +25,7 @@ MainWindow::MainWindow()
       m_toggleMeshButton(nullptr),
       m_meshResolutionSlider(nullptr),
       m_meshResolutionLabel(nullptr),
+      m_brushToolRadio(nullptr),
       m_glWidget(nullptr)
 {
     setWindowTitle("2D Projects");
@@ -66,6 +67,27 @@ MainWindow::MainWindow()
     controlsScroll->setWidgetResizable(true);
 
     vLayout->addWidget(controlsScroll);
+
+    brushLayout->addWidget(new QLabel(tr("Draw tool:")));
+    auto *toolGroup = new QButtonGroup(this);
+    m_brushToolRadio = new QRadioButton(tr("Brush"));
+    QRadioButton *eraserRadio = new QRadioButton(tr("Eraser (click stroke)"));
+    m_brushToolRadio->setChecked(true);
+    toolGroup->addButton(m_brushToolRadio);
+    toolGroup->addButton(eraserRadio);
+    toolGroup->setExclusive(true);
+    brushLayout->addWidget(m_brushToolRadio);
+    brushLayout->addWidget(eraserRadio);
+    connect(m_brushToolRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_canvas->setTool(Canvas2D::Tool::Brush);
+        }
+    });
+    connect(eraserRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_canvas->setTool(Canvas2D::Tool::Eraser);
+        }
+    });
 
     addPushButton(brushLayout, "Load Image", &MainWindow::onUploadButtonClick);
     addPushButton(brushLayout, "Revert Image", &MainWindow::onRevertButtonClick);
@@ -112,10 +134,18 @@ void MainWindow::setupCanvas2D() {
 void MainWindow::onClearButtonClick() {
     m_canvas->resize(m_canvas->parentWidget()->size().width(), m_canvas->parentWidget()->size().height());
     m_canvas->clearCanvas();
+    if (m_brushToolRadio) {
+        m_brushToolRadio->setChecked(true);
+    }
+    m_canvas->setTool(Canvas2D::Tool::Brush);
 }
 
 void MainWindow::onRevertButtonClick() {
     m_canvas->loadImageFromFile(settings.imagePath);
+    if (m_brushToolRadio) {
+        m_brushToolRadio->setChecked(true);
+    }
+    m_canvas->setTool(Canvas2D::Tool::Brush);
 }
 
 void MainWindow::onUploadButtonClick() {
@@ -125,6 +155,10 @@ void MainWindow::onUploadButtonClick() {
 
     m_canvas->loadImageFromFile(settings.imagePath);
 
+    if (m_brushToolRadio) {
+        m_brushToolRadio->setChecked(true);
+    }
+    m_canvas->setTool(Canvas2D::Tool::Brush);
     m_canvas->settingsChanged();
 }
 

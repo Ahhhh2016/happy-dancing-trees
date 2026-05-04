@@ -10,6 +10,7 @@
 #include <QBoxLayout>
 #include <QStackedWidget>
 #include <QPointer>
+#include <QButtonGroup>
 
 #include "canvas2d.h"
 #include "glwidget.h"
@@ -54,6 +55,7 @@ private:
     QPushButton     *m_toggleMeshButton;
     QSlider         *m_meshResolutionSlider;
     QLabel          *m_meshResolutionLabel;
+    QRadioButton    *m_brushToolRadio;
     GLWidget        *m_glWidget;
     bool             m_sliderMeshRebuildBusy = false;
     bool             m_sliderMeshRebuildPending = false;
