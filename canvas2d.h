@@ -17,7 +17,7 @@ class QPaintEvent;
 class Canvas2D : public QLabel {
     Q_OBJECT
 public:
-    enum class Tool { Brush, Eraser, Paint, PaintEraser };
+    enum class Tool { Brush, Eraser, Paint, PaintEraser, BucketFill };
 
     int m_width = 0;
     int m_height = 0;
@@ -32,6 +32,7 @@ public:
     QColor paintColor() const { return m_paintColor; }
     void setPaintBrushRadius(float radius);
     float paintBrushRadius() const { return m_paintBrushRadius; }
+    void clearPaint();
 
     void init();
     /// @param notifyMeshPreview when false, skip meshPreviewDirty (e.g. startup init).
@@ -148,6 +149,7 @@ private:
     void paintSegment(const QPointF &a, const QPointF &b);
     void erasePaintAt(const QPointF &p);
     void erasePaintSegment(const QPointF &a, const QPointF &b);
+    void bucketFillAt(const QPointF &p);
     std::vector<RGBA> compositeForDisplay() const;
     std::vector<RGBA> compositeMeshTexture() const;
 };

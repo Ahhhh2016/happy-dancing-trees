@@ -50,7 +50,7 @@ MainWindow::MainWindow()
     connect(m_canvas, &Canvas2D::meshPreviewDirty, this, [this]() {
         m_meshPreviewDebounceTimer.start();
     });
-    resize(1100, 600);
+    resize(1100, 700);
 
     // Split view: 2D canvas and 3D mesh visible together (draggable divider).
     m_mainSplitter = new QSplitter(Qt::Horizontal);
@@ -121,20 +121,27 @@ MainWindow::MainWindow()
     auto *toolGroup = new QButtonGroup(this);
     m_brushToolRadio = new QRadioButton(tr("Pen"));
     QRadioButton *paintRadio = new QRadioButton(tr("Paint"));
+    QRadioButton *bucketRadio = new QRadioButton(tr("Bucket fill"));
     brushLayout->addWidget(m_brushToolRadio);
     brushLayout->addWidget(paintRadio);
+    brushLayout->addWidget(bucketRadio);
 
     brushLayout->addWidget(new QLabel(tr("Erase tool:")));
     QRadioButton *eraserRadio = new QRadioButton(tr("Pen (stroke)"));
     QRadioButton *paintEraserRadio = new QRadioButton(tr("Paint (pixels)"));
     brushLayout->addWidget(eraserRadio);
     brushLayout->addWidget(paintEraserRadio);
+    QPushButton *clearPaintButton = new QPushButton(tr("Clear paint"));
+    clearPaintButton->setToolTip(
+        tr("Remove all paint-layer color while keeping strokes and filled regions."));
+    brushLayout->addWidget(clearPaintButton);
     paintEraserRadio->setToolTip(
         tr("Drag to clear painted pixels from the texture layer."));
     m_brushToolRadio->setChecked(true);
     toolGroup->addButton(m_brushToolRadio);
     toolGroup->addButton(eraserRadio);
     toolGroup->addButton(paintRadio);
+    toolGroup->addButton(bucketRadio);
     toolGroup->addButton(paintEraserRadio);
     toolGroup->setExclusive(true);
     connect(m_brushToolRadio, &QRadioButton::toggled, this, [this](bool on) {
@@ -152,10 +159,18 @@ MainWindow::MainWindow()
             m_canvas->setTool(Canvas2D::Tool::Paint);
         }
     });
+    connect(bucketRadio, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) {
+            m_canvas->setTool(Canvas2D::Tool::BucketFill);
+        }
+    });
     connect(paintEraserRadio, &QRadioButton::toggled, this, [this](bool on) {
         if (on) {
             m_canvas->setTool(Canvas2D::Tool::PaintEraser);
         }
+    });
+    connect(clearPaintButton, &QPushButton::clicked, this, [this]() {
+        m_canvas->clearPaint();
     });
 
     brushLayout->addWidget(new QLabel(tr("Paint color:")));

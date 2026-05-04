@@ -136,6 +136,8 @@ void Canvas2D::setTool(Tool t) {
         setCursor(Qt::CrossCursor);
     } else if (t == Tool::PaintEraser) {
         setCursor(Qt::ArrowCursor);
+    } else if (t == Tool::BucketFill) {
+        setCursor(Qt::PointingHandCursor);
     } else {
         unsetCursor();
     }
@@ -147,6 +149,13 @@ void Canvas2D::setPaintColor(const QColor &c) {
 
 void Canvas2D::setPaintBrushRadius(float radius) {
     m_paintBrushRadius = std::clamp(radius, 1.5f, 80.0f);
+}
+
+void Canvas2D::clearPaint() {
+    ensurePaintLayerAllocated();
+    std::fill(m_paintLayer.begin(), m_paintLayer.end(), RGBA(0, 0, 0, 0));
+    displayImage();
+    emit meshPreviewDirty();
 }
 
 RGBA Canvas2D::blendSourceOver(const RGBA &dst, const RGBA &src) {
@@ -261,6 +270,53 @@ void Canvas2D::erasePaintSegment(const QPointF &a, const QPointF &b) {
     for (int i = 1; i <= n; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(n);
         erasePaintAt(a + (b - a) * t);
+    }
+}
+
+void Canvas2D::bucketFillAt(const QPointF &p) {
+    ensurePaintLayerAllocated();
+    ensureStrokeOverlayAllocated();
+    const int sx = static_cast<int>(std::floor(p.x()));
+    const int sy = static_cast<int>(std::floor(p.y()));
+    if (sx < 0 || sx >= m_width || sy < 0 || sy >= m_height) {
+        return;
+    }
+    const int startIdx = sy * m_width + sx;
+    if (m_strokeOverlay[static_cast<std::size_t>(startIdx)].a > 0) {
+        return;
+    }
+
+    const RGBA replacement{
+        static_cast<std::uint8_t>(m_paintColor.red()),
+        static_cast<std::uint8_t>(m_paintColor.green()),
+        static_cast<std::uint8_t>(m_paintColor.blue()),
+        static_cast<std::uint8_t>(m_paintColor.alpha())};
+    const RGBA target = m_paintLayer[static_cast<std::size_t>(startIdx)];
+    if (target.r == replacement.r && target.g == replacement.g &&
+        target.b == replacement.b && target.a == replacement.a) {
+        return;
+    }
+
+    std::queue<int> q;
+    q.push(startIdx);
+    while (!q.empty()) {
+        const int idx = q.front();
+        q.pop();
+        RGBA &px = m_paintLayer[static_cast<std::size_t>(idx)];
+        if (!(px.r == target.r && px.g == target.g && px.b == target.b && px.a == target.a)) {
+            continue;
+        }
+        if (m_strokeOverlay[static_cast<std::size_t>(idx)].a > 0) {
+            continue;
+        }
+        px = replacement;
+
+        const int x = idx % m_width;
+        const int y = idx / m_width;
+        if (x > 0) q.push(idx - 1);
+        if (x + 1 < m_width) q.push(idx + 1);
+        if (y > 0) q.push(idx - m_width);
+        if (y + 1 < m_height) q.push(idx + m_width);
     }
 }
 
@@ -901,6 +957,13 @@ void Canvas2D::mouseDown(const QPointF &point) {
         m_paintDragLast = point;
         erasePaintAt(point);
         displayImage();
+        return;
+    }
+    if (m_tool == Tool::BucketFill) {
+        bucketFillAt(point);
+        displayImage();
+        emit meshPreviewDirty();
+        update();
         return;
     }
     beginStroke(point);
