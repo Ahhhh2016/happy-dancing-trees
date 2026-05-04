@@ -18,6 +18,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 find_package(Qt6 REQUIRED COMPONENTS OpenGL)
 find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Concurrent)
 
 # Specifies required Qt components
 add_definitions(-D_USE_MATH_DEFINES)
@@ -94,6 +95,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   Qt::Gui
   Qt::OpenGL
   Qt::OpenGLWidgets
+  Qt::Concurrent
   igl::core
   # CDT::CDT
 )

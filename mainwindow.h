@@ -34,11 +34,17 @@ private slots:
     void onUploadButtonClick();
     void onSaveButtonClick();
     void onToggleMeshViewClick();
+    void onMeshResolutionSliderChanged(int value);
+    void onMeshResolutionSliderReleased();
 
 private:
     // Runs the mesh inflation pipeline; returns the path to the written OBJ,
     // or an empty string on failure.
     QString buildMeshAndSaveObj();
+    double maxTriangleAreaFromSlider() const;
+    void updateMeshResolutionLabel();
+    void startAsyncSliderMeshRebuild();
+    void finishAsyncSliderMeshRebuild();
 
 private:
     QString          m_lastMeshPath;
@@ -46,6 +52,10 @@ private:
     int              m_canvasPageIndex;
     int              m_meshPageIndex;
     QPushButton     *m_toggleMeshButton;
+    QSlider         *m_meshResolutionSlider;
+    QLabel          *m_meshResolutionLabel;
     GLWidget        *m_glWidget;
+    bool             m_sliderMeshRebuildBusy = false;
+    bool             m_sliderMeshRebuildPending = false;
 };
 #endif // MAINWINDOW_H

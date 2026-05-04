@@ -65,7 +65,9 @@ public:
     monster();
     // canvasW/canvasH: 2D drawing size in the same units as stroke coordinates.
     // Embeddings are rotated 180° in-plane so the 3D mesh matches the on-screen sketch.
-    StitchedMesh buildMesh(const std::vector<Region>& regions, double canvasW, double canvasH);
+    // maxTriangleArea: Triangle -a bound in the same units as stroke coordinates (smaller → more triangles, smoother inflation).
+    StitchedMesh buildMesh(const std::vector<Region>& regions, double canvasW, double canvasH,
+                           double maxTriangleArea = 100.0);
     StitchedMesh stitchParts();
     std::vector<MeshPart> m_meshParts;
     std::vector<bool> buildIsMerging(const Eigen::MatrixXd& V,
@@ -76,7 +78,8 @@ private:
     // Step 1: Triangulate a region's 2D boundary using CDT
     void triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
                            Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                           const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines = {});
+                           const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines = {},
+                           double maxTriangleArea = 100.0);
 
     // Step 2: Duplicate front/back of mesh
     MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,

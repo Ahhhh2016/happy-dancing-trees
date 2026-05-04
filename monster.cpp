@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <limits>
 #include <cmath>
+#include <cstdio>
 #include <numeric>
 #include <map>
 #include <set>
@@ -53,7 +54,9 @@ void writeOBJWithPlanarUV(const std::string &path,
 
 monster::monster() {}
 
-StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
+StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canvasW, double canvasH,
+                                double maxTriangleArea) {
+    maxTriangleArea = std::max(maxTriangleArea, 1e-6);
     m_meshParts.clear();
 
     // Separate regions into hosts and attachments.
@@ -114,7 +117,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXd V2;
         Eigen::MatrixXi F2;
         int n;
-        triangulateRegion(region, V, n, V2, F2, bpPolylines);
+        triangulateRegion(region, V, n, V2, F2, bpPolylines, maxTriangleArea);
 
         std::vector<bool> hostMerging(V2.rows(), false);
         std::set<int> armpitEndpointSet;
@@ -150,7 +153,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions) {
         Eigen::MatrixXd V2;
         Eigen::MatrixXi F2;
         int n;
-        triangulateRegion(region, V, n, V2, F2);
+        triangulateRegion(region, V, n, V2, F2, {}, maxTriangleArea);
         auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
         auto isMerging = buildIsMerging(V2, bpPolylines[li], 0.5);
         m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
@@ -404,7 +407,9 @@ std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
 
 void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n,
                                 Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                                const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines) {
+                                const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines,
+                                double maxTriangleArea) {
+    maxTriangleArea = std::max(maxTriangleArea, 1e-6);
     std::vector<Eigen::Vector2f> boundaryPoints;
     for (const Stroke& stroke : region.boundaries) {
         int m = stroke.points.size();
@@ -455,8 +460,10 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     Eigen::MatrixXd H(0, 2);
-    // Y: prevent Steiner points on constrained segments.
-    igl::triangle::triangulate(V, E, H, "pYQa100q20", V2, F2);
+    // Y: prevent Steiner points on constrained segments. a: max triangle area (controls count / smoothing).
+    char triOpts[64];
+    std::snprintf(triOpts, sizeof(triOpts), "pYQa%.12gq20", maxTriangleArea);
+    igl::triangle::triangulate(V, E, H, triOpts, V2, F2);
 }
 
 StitchedMesh monster::stitchParts() {
