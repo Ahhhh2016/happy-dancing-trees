@@ -1,5 +1,4 @@
 #include "glwidget.h"
-
 #include "util/tiny_obj_loader.h"
 
 #include <QApplication>
@@ -8,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include "monster.h"
 
 #define SPEED 1.5
 #define ROTATE_SPEED 0.0025
@@ -30,7 +30,10 @@ GLWidget::GLWidget(QWidget *parent) :
     m_vertical(),
     m_lastX(),
     m_lastY(),
-    m_rotateCapture(false)
+    m_rightCapture(false),
+    m_leftCapture(false),
+    m_rightClickSelectMode(SelectMode::None),
+    m_lastSelectedVertex(-1)
 {
     setMouseTracking(true);
     QApplication::setOverrideCursor(Qt::ArrowCursor);
@@ -41,11 +44,13 @@ GLWidget::GLWidget(QWidget *parent) :
 GLWidget::~GLWidget()
 {
     if (m_shader != nullptr) delete m_shader;
+    if (m_pointShader != nullptr) delete m_pointShader;
 }
 
 void GLWidget::setMeshPath(const std::string &path)
 {
     m_pendingMeshPath = path;
+
     if (m_glInitialized) {
         makeCurrent();
         loadMeshFromFile(path);
@@ -72,10 +77,10 @@ void GLWidget::initializeGL()
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    // Initialize the shader
-    m_shader = new Shader(":/resources/shaders/shader.vert", ":/resources/shaders/shader.frag");
+    // Initialize shaders
+    m_shader = new Shader(":resources/shaders/shader.vert", ":resources/shaders/shader.frag");
+    m_pointShader = new Shader(":resources/shaders/anchorPoint.vert", ":resources/shaders/anchorPoint.geom", ":resources/shaders/anchorPoint.frag");
 
-    // Initialize camera with a reasonable transform
     Eigen::Vector3f eye    = {0, 2, -5};
     Eigen::Vector3f target = {0, 1,  0};
     m_camera.lookAt(eye, target);
@@ -95,16 +100,25 @@ void GLWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (m_meshLoaded && m_shader != nullptr) {
-        // Toggle wireframe via polygon mode so it works for any mesh,
-        // not just those with tet indices.
         glPolygonMode(GL_FRONT_AND_BACK, m_wireframe ? GL_LINE : GL_FILL);
         m_shader->bind();
         m_shader->setUniform("proj", m_camera.getProjection());
         m_shader->setUniform("view", m_camera.getView());
-        m_mesh.draw(m_shader);
+        m_arap.draw(m_shader, GL_TRIANGLES);
         m_shader->unbind();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
+
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    m_pointShader->bind();
+    m_pointShader->setUniform("proj",   m_camera.getProjection());
+    m_pointShader->setUniform("view",   m_camera.getView());
+    m_pointShader->setUniform("vSize",  m_vSize);
+    m_pointShader->setUniform("width",  width());
+    m_pointShader->setUniform("height", height());
+    m_arap.draw(m_pointShader, GL_POINTS);
+    m_pointShader->unbind();
 }
 
 void GLWidget::resizeGL(int w, int h)
@@ -124,7 +138,6 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
     std::string err;
-    // Older tinyobjloader API: (attrib, shapes, materials, err, filename, ...)
     bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, path.c_str(),
                                /*mtl_basedir=*/nullptr, /*triangulate=*/true);
     if (!err.empty()) std::cerr << "tinyobj: " << err << std::endl;
@@ -133,7 +146,8 @@ void GLWidget::loadMeshFromFile(const std::string &path)
         return;
     }
 
-    std::vector<Eigen::Vector3d> vertices;
+    // Load as float from the start
+    std::vector<Eigen::Vector3f> vertices;
     vertices.reserve(attrib.vertices.size() / 3);
     for (size_t i = 0; i + 2 < attrib.vertices.size(); i += 3) {
         vertices.emplace_back(attrib.vertices[i + 0],
@@ -163,21 +177,29 @@ void GLWidget::loadMeshFromFile(const std::string &path)
         return;
     }
 
-    // Center and normalize scale so the mesh fits a unit-ish view.
-    Eigen::Vector3d mn = vertices.front();
-    Eigen::Vector3d mx = vertices.front();
+    // Center and normalize scale using float
+    Eigen::Vector3f mn = vertices.front();
+    Eigen::Vector3f mx = vertices.front();
     for (const auto &v : vertices) {
         mn = mn.cwiseMin(v);
         mx = mx.cwiseMax(v);
     }
-    const Eigen::Vector3d center = 0.5 * (mn + mx);
-    const double diag = (mx - mn).norm();
-    const double scale = (diag > 1e-8) ? (2.0 / diag) : 1.0;
+    const Eigen::Vector3f center = 0.5f * (mn + mx);
+    const float diag = (mx - mn).norm();
+    const float scale = (diag > 1e-8f) ? (2.0f / diag) : 1.0f;
     for (auto &v : vertices) {
         v = (v - center) * scale;
     }
 
-    m_mesh.init(vertices, triangles);
+    // Initialize ARAP with the mesh
+    Eigen::Vector3f coeffMin, coeffMax;
+    m_arap.init(coeffMin, coeffMax, vertices, triangles);
+
+    float extentLength = (coeffMax - coeffMin).norm();
+    m_vSize = 0.005f * extentLength;
+    m_movementScaling = extentLength * 0.5f;
+    m_vertexSelectionThreshold = extentLength * 0.025f;
+
     m_meshLoaded = true;
 
     std::cout << "Loaded OBJ: " << path
@@ -185,45 +207,92 @@ void GLWidget::loadMeshFromFile(const std::string &path)
               << "  tris="  << triangles.size() << std::endl;
 }
 
-// ================== Event Listeners
+// Event Listeners
 
 void GLWidget::mousePressEvent(QMouseEvent *event)
 {
-    m_lastX = event->position().x();
-    m_lastY = event->position().y();
+    const int currX = event->position().x();
+    const int currY = event->position().y();
 
-    if (event->button() == Qt::LeftButton) {
-        m_rotateCapture = true;
+    const Eigen::Vector3f ray = transformToWorldRay(currX, currY);
+    const int closest_vertex = m_arap.getClosestVertex(m_camera.getPosition(), ray, m_vertexSelectionThreshold);
+
+    // Switch on button
+    switch (event->button()) {
+    case Qt::MouseButton::RightButton: {
+        m_rightCapture = true;
+        m_rightClickSelectMode = m_arap.select(m_pointShader, closest_vertex);
+        break;
     }
+    case Qt::MouseButton::LeftButton: {
+        m_leftCapture = true;
+        m_lastSelectedVertex = closest_vertex;
+        break;
+    }
+    default: break;
+    }
+
+    // Set last mouse coordinates
+    m_lastX = currX;
+    m_lastY = currY;
 }
 
 void GLWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    int currX  = event->position().x();
-    int currY  = event->position().y();
-
-    int deltaX = currX - m_lastX;
-    int deltaY = currY - m_lastY;
-
-    if (m_rotateCapture && (deltaX != 0 || deltaY != 0)) {
-        m_camera.rotate(deltaY * ROTATE_SPEED,
-                        -deltaX * ROTATE_SPEED);
+    // Return if neither mouse button is currently held down
+    if (!(m_leftCapture || m_rightCapture)) {
+        return;
     }
 
+    // Get current mouse coordinates
+    const int currX = event->position().x();
+    const int currY = event->position().y();
+
+    const Eigen::Vector3f ray = transformToWorldRay(event->position().x(), event->position().y());
+
+    // If right is held down
+    if (m_rightCapture) {
+        const int closest_vertex = m_arap.getClosestVertex(m_camera.getPosition(), ray, m_vertexSelectionThreshold);
+
+        // Anchor/un-anchor the vertex
+        if (m_rightClickSelectMode == SelectMode::None) {
+            m_rightClickSelectMode = m_arap.select(m_pointShader, closest_vertex);
+        } else {
+            m_arap.selectWithSpecifiedMode(m_pointShader, closest_vertex, m_rightClickSelectMode);
+        }
+
+        return;
+    }
+
+    Eigen::Vector3f pos;
+    if (m_lastSelectedVertex != -1 && m_arap.getAnchorPos(m_lastSelectedVertex, pos, ray, m_camera.getPosition())) {
+        m_arap.move(m_lastSelectedVertex, pos);
+    } else {
+        // Rotate the camera
+        const int deltaX = currX - m_lastX;
+        const int deltaY = currY - m_lastY;
+        if (deltaX != 0 || deltaY != 0) {
+            m_camera.rotate(deltaY * ROTATE_SPEED, -deltaX * ROTATE_SPEED);
+        }
+    }
+
+    // Set last mouse coordinates
     m_lastX = currX;
     m_lastY = currY;
 }
 
 void GLWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton) {
-        m_rotateCapture = false;
-    }
+    m_leftCapture = false;
+    m_lastSelectedVertex = -1;
+
+    m_rightCapture = false;
+    m_rightClickSelectMode = SelectMode::None;
 }
 
 void GLWidget::wheelEvent(QWheelEvent *event)
 {
-    float zoom = 1 - event->pixelDelta().y() * 0.1f / 120.f;
+    float zoom = 1.0f - event->pixelDelta().y() * 0.1f / 120.0f;
     m_camera.zoom(zoom);
 }
 
@@ -240,8 +309,9 @@ void GLWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_F: m_vertical -= SPEED; break;
     case Qt::Key_R: m_vertical += SPEED; break;
     case Qt::Key_C: m_camera.toggleIsOrbiting(); break;
-    case Qt::Key_T: m_wireframe = !m_wireframe; update(); break;
-    case Qt::Key_Escape: close(); break;
+    case Qt::Key_Equal: m_vSize *= 11.0f / 10.0f; break;
+    case Qt::Key_Minus: m_vSize *= 10.0f / 11.0f; break;
+    case Qt::Key_Escape: QApplication::quit();
     }
 }
 
@@ -260,22 +330,37 @@ void GLWidget::keyReleaseEvent(QKeyEvent *event)
     }
 }
 
-// ================== Physics Tick
+//Physics Tick
 
 void GLWidget::tick()
 {
-    float deltaSeconds = m_deltaTimeProvider.restart() / 1000.f;
+    float deltaSeconds = m_deltaTimeProvider.restart() / 1000.0f;
 
     auto look = m_camera.getLook();
     look.y() = 0;
     if (look.squaredNorm() > 1e-8f) look.normalize();
     Eigen::Vector3f perp(-look.z(), 0, look.x());
     Eigen::Vector3f moveVec = m_forward * look
-                            + m_sideways * perp
-                            + m_vertical * Eigen::Vector3f::UnitY();
+                              + m_sideways * perp
+                              + m_vertical * Eigen::Vector3f::UnitY();
     moveVec *= deltaSeconds;
     m_camera.move(moveVec);
-
-    // Flag this view for repainting (Qt will call paintGL() soon after)
     update();
 }
+
+Eigen::Vector3f GLWidget::transformToWorldRay(int x, int y)
+{
+    Eigen::Vector4f clipCoords = Eigen::Vector4f(
+        (float(x) / width()) * 2.0f - 1.0f,
+        1.0f - (float(y) / height()) * 2.0f,
+        -1.0f,
+        1.0f);
+
+    Eigen::Vector4f transformed_coords = m_camera.getProjection().inverse() * clipCoords;
+    transformed_coords = Eigen::Vector4f(transformed_coords.x(), transformed_coords.y(), -1.0f, 0.0f);
+    transformed_coords = m_camera.getView().inverse() * transformed_coords;
+
+    return Eigen::Vector3f(transformed_coords.x(), transformed_coords.y(), transformed_coords.z()).normalized();
+}
+
+

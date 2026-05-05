@@ -129,6 +129,7 @@ QString MainWindow::buildMeshAndSaveObj() {
               << QFileInfo(path).absoluteFilePath().toStdString()
               << std::endl;
     m_lastMeshPath = path;
+
     return path;
 }
 

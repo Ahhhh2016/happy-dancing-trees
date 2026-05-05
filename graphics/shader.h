@@ -12,8 +12,9 @@
 
 class Shader {
 public:
-    Shader(const std::string &vertexPath,
-           const std::string &fragmentPath);
+    Shader(const std::string &vertexPath, const std::string &fragmentPath);
+    Shader(const std::string &vertexPath, const std::string &geometryPath, const std::string &fragmentPath);
+
 
     virtual ~Shader();
 
@@ -58,6 +59,12 @@ private:
     void addUniform(const std::string &name);
     void addUniformArray(const std::string &name, size_t size);
     void addTexture(const std::string &name);
+
+    GLuint createFragmentShaderFromSource(const std::string &source);
+    GLuint createGeometryShaderFromSource(const std::string &source);
+    void compileShader(GLuint handle, const std::string &source);
+    GLuint createVertexShaderFromSource(const std::string &source);
+    GLuint createShaderFromSource(const std::string &source, GLenum shaderType);
 
     // Identifies the shader program associated with this shader
     GLuint m_programID;

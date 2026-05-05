@@ -47,5 +47,6 @@ private:
     int              m_meshPageIndex;
     QPushButton     *m_toggleMeshButton;
     GLWidget        *m_glWidget;
+
 };
 #endif // MAINWINDOW_H
