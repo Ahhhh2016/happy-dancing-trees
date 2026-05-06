@@ -158,7 +158,7 @@ void GLWidget::paintGL()
         m_shader->bind();
         m_shader->setUniform("proj", m_camera.getProjection());
         m_shader->setUniform("view", m_camera.getView());
-        m_mesh.draw(m_shader);
+        m_arap.draw(m_shader);
         m_shader->unbind();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
@@ -303,6 +303,9 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     // Initialize ARAP with the mesh.
     Eigen::Vector3f coeffMin, coeffMax;
     m_arap.init(coeffMin, coeffMax, vertices, triangles);
+    if (textured) {
+        m_arap.initTexture(vertices, triangles, cornerUVs, texId);
+    }
 
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;
@@ -473,5 +476,4 @@ Eigen::Vector3f GLWidget::transformToWorldRay(int x, int y)
 
     return Eigen::Vector3f(transformed_coords.x(), transformed_coords.y(), transformed_coords.z()).normalized();
 }
-
 

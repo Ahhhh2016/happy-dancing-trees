@@ -26,6 +26,11 @@ public:
     ARAP();
     void init(Eigen::Vector3f &min, Eigen::Vector3f &max,
               std::vector<Eigen::Vector3f> V, std::vector<Eigen::Vector3i> T);
+    void init(Eigen::Vector3f &coeffMin, Eigen::Vector3f &coeffMax, std::vector<Eigen::Vector3f> V, std::vector<Eigen::Vector3i> T, Shape &s);
+    void initTexture(const std::vector<Eigen::Vector3f> &vertices,
+                     const std::vector<Eigen::Vector3i> &triangles,
+                     const std::vector<Eigen::Vector2f> &texcoordsPerCorner,
+                     GLuint diffuseTexture);
     void move(int vertex, Eigen::Vector3f pos);
     std::map<int, Eigen::Vector3f> getNeighbors(Eigen::Vector3f &i);
     std::map<int, Eigen::Vector3f> getNeighborsByIndex(int idx);
@@ -38,6 +43,24 @@ public:
     void draw(Shader *shader, GLenum mode)
     {
         m_shape.draw(shader, mode);
+    }
+
+    void draw(Shader *shader)
+    {
+        m_shape.draw(shader);
+    }
+
+    void destroyGL()
+    {
+        m_shape.destroyGL();
+    }
+
+    void init(const std::vector<Eigen::Vector3f> &vertices,
+              const std::vector<Eigen::Vector3i> &triangles,
+              const std::vector<Eigen::Vector2f> &texcoordsPerCorner,
+              GLuint diffuseTexture)
+    {
+        m_shape.init(vertices, triangles, texcoordsPerCorner, diffuseTexture);
     }
 
     SelectMode select(Shader *shader, int vertex)
