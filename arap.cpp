@@ -11,6 +11,21 @@ using namespace Eigen;
 
 ARAP::ARAP() {}
 
+std::map<int, Vector3f> ARAP::getNeighbors(Eigen::Vector3f &i)
+{
+    int idx = -1;
+    for (int v = 0; v < static_cast<int>(m_p.size()); ++v) {
+        if ((m_p[v] - i).squaredNorm() < 1e-12f) {
+            idx = v;
+            break;
+        }
+    }
+    if (idx < 0) {
+        return {};
+    }
+    return getNeighborsByIndex(idx);
+}
+
 void ARAP::init(Eigen::Vector3f &coeffMin, Eigen::Vector3f &coeffMax, vector<Vector3f> V, vector<Vector3i> T)
 {
     m_shape.init(V, T);

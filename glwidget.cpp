@@ -87,6 +87,28 @@ void GLWidget::centerView()
     update();
 }
 
+Eigen::Vector3f GLWidget::MakeArap(Eigen::MatrixXd V, Eigen::MatrixXi T)
+{
+    std::vector<Eigen::Vector3f> vertices;
+    vertices.reserve(static_cast<size_t>(V.rows()));
+    for (int r = 0; r < V.rows(); ++r) {
+        vertices.emplace_back(static_cast<float>(V(r, 0)),
+                              static_cast<float>(V(r, 1)),
+                              static_cast<float>(V(r, 2)));
+    }
+
+    std::vector<Eigen::Vector3i> triangles;
+    triangles.reserve(static_cast<size_t>(T.rows()));
+    for (int r = 0; r < T.rows(); ++r) {
+        triangles.emplace_back(T(r, 0), T(r, 1), T(r, 2));
+    }
+
+    Eigen::Vector3f coeffMin = Eigen::Vector3f::Zero();
+    Eigen::Vector3f coeffMax = Eigen::Vector3f::Zero();
+    m_arap.init(coeffMin, coeffMax, vertices, triangles);
+    return coeffMax - coeffMin;
+}
+
 // ================== Basic OpenGL Overrides
 
 void GLWidget::initializeGL()
@@ -271,14 +293,13 @@ void GLWidget::loadMeshFromFile(const std::string &path)
 
     if (textured) {
         m_mesh.init(vertices, triangles, cornerUVs, texId);
-    } else {
-        if (texId != 0) {
-            glDeleteTextures(1, &texId);
-        }
-        // Initialize ARAP with the mesh
+    } else if (texId != 0) {
+        glDeleteTextures(1, &texId);
+    }
+
+    // Initialize ARAP with the mesh.
     Eigen::Vector3f coeffMin, coeffMax;
     m_arap.init(coeffMin, coeffMax, vertices, triangles);
-    }
 
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;

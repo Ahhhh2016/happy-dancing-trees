@@ -42,6 +42,7 @@ add_executable(${PROJECT_NAME}
 
 
   glwidget.cpp
+  arap.cpp
   graphics/camera.cpp
   graphics/graphicsdebug.cpp
   graphics/meshloader.cpp
@@ -49,6 +50,7 @@ add_executable(${PROJECT_NAME}
   graphics/shape.cpp
 
   glwidget.h
+  arap.h
   graphics/camera.h
   graphics/graphicsdebug.h
   graphics/meshloader.h
@@ -59,7 +61,6 @@ add_executable(${PROJECT_NAME}
   util/unsupportedeigenthing/OpenGLSupport
 
   resources/shaders/shaders.qrc
-  arap.h arap.cpp
 )
 
 # GLEW: this creates its library and allows you to `#include "GL/glew.h"`

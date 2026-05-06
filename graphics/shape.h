@@ -21,19 +21,12 @@ public:
     ~Shape();
 
     void destroyGL();
-
-<<<<<<< HEAD
-    void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3d> &normals, const std::vector<Eigen::Vector3i> &triangles);
-    void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles);
-    /// Expands triangles into corner lists; \p texcoordsPerCorner size must be 3 × triangle count (or empty for no UV).
-    void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles,
-              const std::vector<Eigen::Vector2f> &texcoordsPerCorner, GLuint diffuseTexture);
-    void init(const std::vector<Eigen::Vector3d> &vertices, const std::vector<Eigen::Vector3i> &triangles, const std::vector<Eigen::Vector4i> &tetIndices);
-=======
-    void init(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3i> &triangles);
     void init(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3f> &normals, const std::vector<Eigen::Vector3i> &triangles);
+    void init(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3i> &triangles);
+    /// Expands triangles into corner lists; \p texcoordsPerCorner size must be 3 × triangle count (or empty for no UV).
+    void init(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3i> &triangles,
+              const std::vector<Eigen::Vector2f> &texcoordsPerCorner, GLuint diffuseTexture);
     void init(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3i> &triangles, const std::vector<Eigen::Vector4i> &tetIndices);
->>>>>>> origin/lizzyarap
 
     void setVertices(const std::vector<Eigen::Vector3f> &vertices);
     void setVertices(const std::vector<Eigen::Vector3f> &vertices, const std::vector<Eigen::Vector3f> &normals);
@@ -73,11 +66,9 @@ private:
     float m_red, m_blue, m_green, m_alpha;
     Eigen::Matrix4f m_modelMatrix;
     bool m_wireframe;
-<<<<<<< HEAD
 
     GLuint m_diffuseTex = 0;
     bool m_hasTexture = false;
-=======
     int lastSelected;
 
     void selectHelper();
@@ -88,7 +79,6 @@ private:
                     std::vector<Eigen::Vector3f>& colors);
     Eigen::Vector3f getNormal(const Eigen::Vector3i& face);
     Eigen::Vector3f getNormal(const Eigen::Vector3i& face, const std::vector<Eigen::Vector3f>& vertices);
->>>>>>> origin/lizzyarap
 };
 
 #endif // SHAPE_H
