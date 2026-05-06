@@ -572,6 +572,48 @@ Vector3f Shape::getNormal(const Vector3i &face)
     return getNormal(face, m_vertices);
 }
 
+
+void Shape::draw(Shader *shader)
+{
+    Eigen::Matrix3f m3 = m_modelMatrix.topLeftCorner(3, 3);
+    Eigen::Matrix3f inverseTransposeModel = m3.inverse().transpose();
+
+    if(m_wireframe && m_tetVao != static_cast<GLuint>(-1)) {
+        shader->setUniform("wire", 1);
+        shader->setUniform("useTexture", 0);
+        shader->setUniform("model", m_modelMatrix);
+        shader->setUniform("inverseTransposeModel", inverseTransposeModel);
+        shader->setUniform("red",   1);
+        shader->setUniform("green", 1);
+        shader->setUniform("blue",  1);
+        shader->setUniform("alpha", 1);
+        glBindVertexArray(m_tetVao);
+        glDrawElements(GL_LINES, m_numTetVertices, GL_UNSIGNED_INT, reinterpret_cast<GLvoid *>(0));
+        glBindVertexArray(0);
+    } else {
+        shader->setUniform("wire", 0);
+        shader->setUniform("model", m_modelMatrix);
+        shader->setUniform("inverseTransposeModel", inverseTransposeModel);
+        shader->setUniform("useTexture", m_hasTexture ? 1 : 0);
+        if (m_hasTexture && m_diffuseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, m_diffuseTex);
+            shader->setUniform("diffuseTex", 0);
+        }
+        shader->setUniform("red",   m_red);
+        shader->setUniform("green", m_green);
+        shader->setUniform("blue",  m_blue);
+        shader->setUniform("alpha", m_alpha);
+        glBindVertexArray(m_surfaceVao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m_numSurfaceVertices), GL_UNSIGNED_INT, reinterpret_cast<GLvoid *>(0));
+        glBindVertexArray(0);
+        if (m_hasTexture && m_diffuseTex != 0) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+}
+
+
 const vector<Vector3f> &Shape::getVertices() { return m_vertices; }
 const vector<Vector3i> &Shape::getFaces() { return m_faces; }
 const unordered_set<int> &Shape::getAnchors() { return m_anchors; }

@@ -149,13 +149,16 @@ void GLWidget::initializeGL()
 
 void GLWidget::paintGL()
 {
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (m_meshLoaded && m_shader != nullptr) {
+        // Toggle wireframe via polygon mode so it works for any mesh,
+        // not just those with tet indices.
         glPolygonMode(GL_FRONT_AND_BACK, m_wireframe ? GL_LINE : GL_FILL);
         m_shader->bind();
         m_shader->setUniform("proj", m_camera.getProjection());
         m_shader->setUniform("view", m_camera.getView());
-        m_arap.draw(m_shader, GL_TRIANGLES);
+        m_mesh.draw(m_shader);
         m_shader->unbind();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
