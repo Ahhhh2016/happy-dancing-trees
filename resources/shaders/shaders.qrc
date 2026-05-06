@@ -2,5 +2,8 @@
     <qresource prefix="/resources/shaders">
         <file>shader.frag</file>
         <file>shader.vert</file>
+        <file>anchorPoint.frag</file>
+        <file>anchorPoint.geom</file>
+        <file>anchorPoint.vert</file>
     </qresource>
 </RCC>

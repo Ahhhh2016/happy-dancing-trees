@@ -194,8 +194,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
 }
 
 std::vector<bool> monster::buildIsMerging(const Eigen::MatrixXd& V,
-                                 const std::vector<Eigen::Vector2f>& bpPoints,
-                                 double eps) {
+                                          const std::vector<Eigen::Vector2f>& bpPoints,
+                                          double eps) {
     std::vector<bool> isMerging(V.rows(), false);
     if (bpPoints.size() < 2) return isMerging;
     for (int i = 0; i < V.rows(); i++) {
@@ -236,9 +236,9 @@ Eigen::Vector2d monster::getLimbInteriorSample(const Region& region) const {
 }
 
 MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
-                         const std::vector<bool>& isDirichletIn,
-                         int depthOrder,
-                         const std::vector<bool>& isMergingIn) {
+                                  const std::vector<bool>& isDirichletIn,
+                                  int depthOrder,
+                                  const std::vector<bool>& isMergingIn) {
     // Mark the first n vertices as Dirichlet — these are the original boundary
     // points (Dp) that will be pinned to z=0 in the Poisson solve
     std::vector<bool> isDirichlet = isDirichletIn;
@@ -606,7 +606,7 @@ void monster::weldSeams(StitchedMesh& mesh) {
 }
 
 std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
-                                   const Eigen::MatrixXd& V_input,
+                                            const Eigen::MatrixXd& V_input,
                                             int n, double eps) {
     std::vector<bool> isDirichlet(V2.rows(), false);
     for (int i = 0; i < V2.rows(); i++) {
@@ -627,17 +627,17 @@ std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
 }
 
 Eigen::SparseMatrix<double> monster::buildCotangentLaplacian(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
-    const int n = V.rows(); 
+    const int n = V.rows();
     std::vector<Eigen::Triplet<double>> triplets;
-    std::vector<double> diagonal(n, 0.0); 
+    std::vector<double> diagonal(n, 0.0);
 
     auto cotangent = [&](int a, int b, int c) {
-        Eigen::Vector3d va(V(a,0), V(a,1), 0.0); 
-        Eigen::Vector3d vb(V(b,0), V(b,1), 0.0); 
-        Eigen::Vector3d vc(V(c,0), V(c,1), 0.0); 
-        Eigen::Vector3d u = va - vc; 
-        Eigen::Vector3d v = vb - vc; 
-        double area2 = u.cross(v).norm(); 
+        Eigen::Vector3d va(V(a,0), V(a,1), 0.0);
+        Eigen::Vector3d vb(V(b,0), V(b,1), 0.0);
+        Eigen::Vector3d vc(V(c,0), V(c,1), 0.0);
+        Eigen::Vector3d u = va - vc;
+        Eigen::Vector3d v = vb - vc;
+        double area2 = u.cross(v).norm();
         if (area2 < 1e-12) return 0.0; // guard against degenerate triangles
         return u.dot(v) / area2; // cot(angle at c)
     };
@@ -646,12 +646,12 @@ Eigen::SparseMatrix<double> monster::buildCotangentLaplacian(const Eigen::Matrix
         int i = F(f,0);
         int j = F(f,1);
         int k = F(f,2);
-        double cij = 0.5 * cotangent(i,j,k); 
-        double cjk = 0.5 * cotangent(j,k,i); 
-        double cki = 0.5 * cotangent(k,i,j); 
-        
+        double cij = 0.5 * cotangent(i,j,k);
+        double cjk = 0.5 * cotangent(j,k,i);
+        double cki = 0.5 * cotangent(k,i,j);
+
         auto addEdge = [&](int a, int b, double w) {
-            if (w == 0.0) return; 
+            if (w == 0.0) return;
             triplets.emplace_back(a, b, -w);
             triplets.emplace_back(b, a, -w);
             diagonal[a] += w;
@@ -668,7 +668,7 @@ Eigen::SparseMatrix<double> monster::buildCotangentLaplacian(const Eigen::Matrix
     Eigen::SparseMatrix<double> L(n, n);
     L.setFromTriplets(triplets.begin(), triplets.end());
     return L;
-} 
+}
 
 Eigen::VectorXd monster::buildMass(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
     Eigen::VectorXd a = Eigen::VectorXd::Zero(V.rows());
@@ -686,11 +686,11 @@ Eigen::VectorXd monster::buildMass(const Eigen::MatrixXd& V, const Eigen::Matrix
 }
 
 Eigen::VectorXd monster::buildRHS(const Eigen::VectorXd& a, const std::vector<bool>& isFront, double c) {
-    const int n = a.size(); 
-    Eigen::VectorXd rhs(n); 
+    const int n = a.size();
+    Eigen::VectorXd rhs(n);
     for (int i = 0; i < n; ++i) {
         double s_i = isFront[i] ? 1.0 : -1.0;
-        rhs(i) = s_i * a(i) * c; 
+        rhs(i) = s_i * a(i) * c;
     }
     return rhs;
 }
@@ -739,5 +739,6 @@ void monster::inflateMesh(
     auto rhs     = buildRHS(a, isFront, c);
     auto h_tilde = solvePoisson(L, rhs, isDirichlet);
     auto h0      = toSemiElliptical(h_tilde, isFront);
-    for (int i = 0; i < V.rows(); ++i) V(i, 2) = h0(i); 
+    for (int i = 0; i < V.rows(); ++i) V(i, 2) = h0(i);
 }
+

@@ -4,6 +4,7 @@
 #define GL_SILENCE_DEPRECATION
 #endif
 
+#include "arap.h"
 #include "graphics/camera.h"
 #include "graphics/shader.h"
 #include "graphics/shape.h"
@@ -30,6 +31,12 @@ public:
     // Reset the camera to the default centered framing.
     void centerView();
 
+    Eigen::Vector3f MakeArap(Eigen::MatrixXd V, Eigen::MatrixXi T);
+
+    Eigen::Vector3f transformToWorldRay(int x, int y);
+
+    void loadMeshFromFile(const std::string &path);
+
 private:
     static const int FRAMES_TO_AVERAGE = 30;
 
@@ -48,14 +55,15 @@ private:
     void keyReleaseEvent  (QKeyEvent   *event) override;
 
 private:
-    void loadMeshFromFile(const std::string &path);
 
 private:
     QElapsedTimer m_deltaTimeProvider; // For measuring elapsed time
     QTimer        m_intervalTimer;     // For triggering timed events
 
     Camera     m_camera;
-    Shader    *m_shader;
+
+    Shader *m_shader;
+    Shader *m_pointShader;
 
     Shape       m_mesh;
     bool        m_meshLoaded;
@@ -71,6 +79,17 @@ private:
     int m_lastY;
 
     bool m_rotateCapture;
+
+    ARAP    m_arap;
+    // Mouse handler stuff
+    bool m_leftCapture;
+    bool m_rightCapture;
+    SelectMode m_rightClickSelectMode;
+    int m_lastSelectedVertex = -1;
+
+    float m_movementScaling;
+    float m_vertexSelectionThreshold;
+    float m_vSize;
 
 private slots:
 

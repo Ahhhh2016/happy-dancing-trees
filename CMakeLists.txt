@@ -59,6 +59,7 @@ add_executable(${PROJECT_NAME}
   util/unsupportedeigenthing/OpenGLSupport
 
   resources/shaders/shaders.qrc
+  arap.h arap.cpp
 )
 
 # GLEW: this creates its library and allows you to `#include "GL/glew.h"`
@@ -122,4 +123,3 @@ endif()
 if (APPLE)
   set(CMAKE_CXX_FLAGS "-Wno-deprecated-volatile")
 endif()
-

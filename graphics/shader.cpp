@@ -20,6 +20,16 @@ Shader::Shader(const std::string &vertexPath,
     discoverShaderData();
 }
 
+Shader::Shader(const std::string &vertexPath, const std::string &geometryPath, const std::string &fragmentPath) {
+    createProgramID();
+    std::vector<GLuint> shaders;
+    shaders.push_back(createVertexShaderFromSource(getFileContents(vertexPath)));
+    shaders.push_back(createGeometryShaderFromSource(getFileContents(geometryPath)));
+    shaders.push_back(createFragmentShaderFromSource(getFileContents(fragmentPath)));
+    buildShaderProgramFromShaders(shaders);
+    discoverShaderData();
+}
+
 Shader::~Shader()
 {
     glDeleteProgram(m_programID);
@@ -61,6 +71,31 @@ GLuint Shader::getEnumeratedUniformLocation(std::string name, int index)
 {
     std::string n = name + "[" + std::to_string(index) + "]";
     return glGetUniformLocation(m_programID, n.c_str());
+}
+
+GLuint Shader::createFragmentShaderFromSource(const std::string &source) {
+    return createShaderFromSource(source, GL_FRAGMENT_SHADER);
+}
+
+GLuint Shader::createGeometryShaderFromSource(const std::string &source) {
+    return createShaderFromSource(source, GL_GEOMETRY_SHADER);
+}
+
+void Shader::compileShader(GLuint handle, const std::string &source) {
+    const GLchar* codeArray[] = { source.c_str() };
+    glShaderSource(handle, 1, codeArray, nullptr);
+    glCompileShader(handle);
+}
+
+GLuint Shader::createVertexShaderFromSource(const std::string &source) {
+    return createShaderFromSource(source, GL_VERTEX_SHADER);
+}
+
+GLuint Shader::createShaderFromSource(const std::string &source, GLenum shaderType) {
+    GLuint shaderHandle = glCreateShader(shaderType);
+    compileShader(shaderHandle, source);
+    checkShaderCompilationStatus(shaderHandle);
+    return shaderHandle;
 }
 
 // ================== Setting Uniforms
