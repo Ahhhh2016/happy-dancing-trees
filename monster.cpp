@@ -11,6 +11,7 @@
 #include <igl/writeOBJ.h>
 #include <igl/remove_unreferenced.h>
 #include <igl/min_quad_with_fixed.h>
+#include <Eigen/SparseCholesky>
 
 using namespace Eigen;
 using namespace std;
@@ -256,8 +257,44 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         const double by = result.V.col(1).maxCoeff() - result.V.col(1).minCoeff();
         const double spanXY = std::max(bx, std::max(by, 1e-12));
         const double layerScale = 0.08 * spanXY;
-        for (int i = 0; i < result.V.rows(); ++i) {
-            result.V(i, 2) -= layerScale * static_cast<double>(result.vertexDepth[i]);
+
+        // Smooth the per-vertex layer-depth field via an implicit Laplacian step
+        // (Tikhonov regularization: minimize ||d - d0||_M^2 + λ * ||∇d||^2).
+        // Without this the merging seam steps abruptly between body and limb;
+        // smoothing rounds the offset into a continuous ramp so the limb blends
+        // into the body instead of forming a cliff at Bp.
+        const int nV = static_cast<int>(result.V.rows());
+        Eigen::VectorXd dOrig(nV);
+        for (int i = 0; i < nV; ++i)
+            dOrig(i) = static_cast<double>(result.vertexDepth[i]);
+
+        Eigen::SparseMatrix<double> L = buildCotangentLaplacian(result.V, result.F);
+        Eigen::VectorXd massVec = buildMass(result.V, result.F);
+
+        std::vector<Eigen::Triplet<double>> mt;
+        mt.reserve(nV);
+        for (int i = 0; i < nV; ++i)
+            mt.emplace_back(i, i, std::max(massVec(i), 1e-12));
+        Eigen::SparseMatrix<double> Mass(nV, nV);
+        Mass.setFromTriplets(mt.begin(), mt.end());
+
+        // smoothLen sets how many world-space units the seam transition spans;
+        // larger → more rounded blend at the cost of slight depth bleed inward.
+        const double smoothLen = 0.06 * spanXY;
+        const double lambda = smoothLen * smoothLen;
+
+        Eigen::SparseMatrix<double> A = Mass + lambda * L;
+        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver(A);
+        Eigen::VectorXd dSmooth = (solver.info() == Eigen::Success)
+            ? solver.solve(Mass * dOrig)
+            : dOrig;
+        if (solver.info() != Eigen::Success) {
+            std::cerr << "Layer-depth smoothing solver failed; falling back to raw depths."
+                      << std::endl;
+        }
+
+        for (int i = 0; i < nV; ++i) {
+            result.V(i, 2) -= layerScale * dSmooth(i);
         }
     }
 
