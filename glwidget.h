@@ -51,6 +51,10 @@ public:
     bool isAnimationRecording() const { return m_animationRecording; }
     bool isAnimationPlaying() const { return m_animationPlaying; }
     void setAnchorsVisible(bool visible);
+    void startOverdubRecording();
+    void stopOverdubRecording();
+    void startPlaybackWithOverdub();
+    void stopPlaybackKeepRecording();
 
 
 private:
@@ -109,6 +113,7 @@ private:
     bool m_animationRecording = false;
     bool m_animationPlaying = false;
     bool m_anchorsVisible = true;
+    bool m_animationOverdubbing = false;
 
 private slots:
 

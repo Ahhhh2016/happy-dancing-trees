@@ -263,6 +263,8 @@ MainWindow::MainWindow()
     animRow3->addWidget(m_toggleAnchorsButton);
     brushLayout->addLayout(animRow3);
 
+
+
     connect(m_recordButton, &QPushButton::clicked, this, [this]() {
         if (m_glWidget) {
             m_glWidget->toggleRecordAnimation();

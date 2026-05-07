@@ -40,6 +40,7 @@ public:
     SelectMode select(Shader *shader, int closest_vertex);
     bool selectWithSpecifiedMode(Shader *shader, int closest_vertex, SelectMode mode);
     void draw(Shader *shader);
+    void drawAnchors(Shader *shader); // separate draw for anchors so we don't interfere with the textures
 
     void clearAnchors();
     void clearVertices() {
@@ -49,6 +50,7 @@ public:
     const std::vector<Eigen::Vector3f>& getVertices() const;
     const std::vector<Eigen::Vector3i>& getFaces() const;
     const std::unordered_set<int>& getAnchors() const;
+
 
 private:
     void destroySurfaceGL();
@@ -61,6 +63,9 @@ private:
     GLuint m_tetVao = static_cast<GLuint>(-1);
     GLuint m_tetVbo;
     GLuint m_tetIbo;
+    GLuint m_anchorVao = 0;
+    GLuint m_anchorVbo = 0;
+    int m_numAnchors = 0;
 
     int m_numSurfaceVertices;
     int m_verticesSize;
@@ -78,6 +83,7 @@ private:
     int lastSelected;
 
     void selectHelper();
+    void buildAnchorVBO();
     void updateMesh(const std::vector<Eigen::Vector3i> &faces,
                     const std::vector<Eigen::Vector3f> &vertices,
                     std::vector<Eigen::Vector3f>& verts,

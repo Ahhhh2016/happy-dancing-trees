@@ -552,15 +552,7 @@ void GLWidget::tick()
     if (m_animation.isRecording() && m_meshLoaded) {
         const auto& verts = m_arap.getShape().getVertices();
         std::vector<Eigen::Vector3f> verticesCopy = verts;
-
-        std::vector<Eigen::Vector3f> anchorPositions;
-        const auto& anchors = m_arap.getShape().getAnchors();
-        for (int idx : anchors) {
-            if (idx < (int)verticesCopy.size()) {
-                anchorPositions.push_back(verticesCopy[idx]);
-            }
-        }
-        m_animation.recordFrame(verticesCopy, anchorPositions);
+        m_animation.recordFrame(verticesCopy);
     }
 
     // handle animation playback
@@ -570,11 +562,10 @@ void GLWidget::tick()
         playbackTime += deltaSeconds;
 
         std::vector<Eigen::Vector3f> frameVertices;
-        if (m_animation.getFrameAtTime(playbackTime, frameVertices)) {
+        if (m_animation.getFrameAtTime(playbackTime, m_arap.getRestPose(), frameVertices)) {
             m_arap.getShape().setVertices(frameVertices);
         }
 
-        // loop if desired
         if (m_animation.isLooping() && playbackTime > m_animation.getDuration()) {
             playbackTime = 0.0f;
         }
