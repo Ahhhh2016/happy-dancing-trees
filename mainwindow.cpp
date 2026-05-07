@@ -226,6 +226,106 @@ MainWindow::MainWindow()
     connect(m_meshResolutionSlider, &QSlider::sliderReleased,
             this, &MainWindow::onMeshResolutionSliderReleased);
     addPushButton(brushLayout, "Clear canvas", &MainWindow::onClearButtonClick);
+
+
+
+    // animation interface
+    brushLayout->addSpacing(10);
+    brushLayout->addWidget(new QLabel(tr("Animation:")));
+
+    auto *animRow1 = new QHBoxLayout();
+    m_recordButton = new QPushButton(tr("📸 Record"));
+    m_recordButton->setCheckable(true);
+
+    m_playButton = new QPushButton(tr("▶ Play"));
+    m_playButton->setCheckable(true);
+
+    m_stopButton = new QPushButton(tr("⏹ Stop"));
+
+    animRow1->addWidget(m_recordButton);
+    animRow1->addWidget(m_playButton);
+    animRow1->addWidget(m_stopButton);
+    brushLayout->addLayout(animRow1);
+
+    auto *animRow2 = new QHBoxLayout();
+    m_saveAnimButton = new QPushButton(tr("💾 Save Animation"));
+
+    m_loadAnimButton = new QPushButton(tr("📂 Import Animation"));
+
+    animRow2->addWidget(m_saveAnimButton);
+    animRow2->addWidget(m_loadAnimButton);
+    brushLayout->addLayout(animRow2);
+
+    auto *animRow3 = new QHBoxLayout();
+    m_toggleAnchorsButton = new QPushButton(tr("Hide Anchors"));
+    m_toggleAnchorsButton->setCheckable(true);
+    m_toggleAnchorsButton->setChecked(false);
+    animRow3->addWidget(m_toggleAnchorsButton);
+    brushLayout->addLayout(animRow3);
+
+    connect(m_recordButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->toggleRecordAnimation();
+            updateAnimationButtonStates();
+        }
+    });
+
+    connect(m_playButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->togglePlayAnimation();
+            updateAnimationButtonStates();
+        }
+    });
+
+    connect(m_stopButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->stopAnimation();
+            updateAnimationButtonStates();
+        }
+    });
+
+    connect(m_saveAnimButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->saveAnimation();
+        }
+    });
+
+    connect(m_loadAnimButton, &QPushButton::clicked, this, [this]() {
+        if (m_glWidget) {
+            m_glWidget->loadAnimation();
+            updateAnimationButtonStates();
+        }
+    });
+
+    // anchors visible/invisible
+    connect(m_toggleAnchorsButton, &QPushButton::clicked, this, [this](bool checked) {
+        m_anchorsVisible = !checked;
+        m_toggleAnchorsButton->setText(m_anchorsVisible ? tr("Hide Anchors") : tr("Show Anchors"));
+        if (m_glWidget) {
+            m_glWidget->setAnchorsVisible(m_anchorsVisible);
+        }
+    });
+
+    updateAnimationButtonStates();
+}
+
+void MainWindow::updateAnimationButtonStates() {
+    if (!m_glWidget) return;
+
+    bool isRecording = m_glWidget->isAnimationRecording();
+    bool isPlaying = m_glWidget->isAnimationPlaying();
+
+    m_recordButton->setChecked(isRecording);
+    m_recordButton->setText(isRecording ? tr("⏹ Recording...") : tr("📸 Record"));
+    m_recordButton->setStyleSheet(isRecording ? "background-color: #ff4444; color: white; font-weight: bold;" : "");
+
+    m_playButton->setChecked(isPlaying);
+    m_playButton->setText(isPlaying ? tr("⏸ Playing...") : tr("▶ Play"));
+    m_playButton->setStyleSheet(isPlaying ? "background-color: #44aa44; color: white; font-weight: bold;" : "");
+
+    m_stopButton->setEnabled(isRecording || isPlaying);
+    m_recordButton->setEnabled(!isPlaying);
+    m_playButton->setEnabled(!isRecording);
 }
 
 void MainWindow::addPushButton(QBoxLayout *layout, QString text,
@@ -370,3 +470,5 @@ void MainWindow::applyAnimationViewMode() {
         m_glWidget->setFocus(Qt::OtherFocusReason);
     }
 }
+
+

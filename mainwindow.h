@@ -59,5 +59,15 @@ private:
     bool             m_sliderMeshRebuildPending = false;
     QTimer           m_meshPreviewDebounceTimer;
     QList<int>       m_cachedSplitterSizes;
+
+    // animation add ons
+    QPushButton *m_recordButton;
+    QPushButton *m_playButton;
+    QPushButton *m_stopButton;
+    QPushButton *m_saveAnimButton;
+    QPushButton *m_loadAnimButton;
+    QPushButton *m_toggleAnchorsButton;
+    bool m_anchorsVisible = true;
+    void updateAnimationButtonStates();
 };
 #endif // MAINWINDOW_H

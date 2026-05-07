@@ -115,7 +115,7 @@ Eigen::Vector3f GLWidget::MakeArap(Eigen::MatrixXd V, Eigen::MatrixXi T)
     return coeffMax - coeffMin;
 }
 
-// ================== Basic OpenGL Overrides
+// Basic OpenGL Overrides
 
 void GLWidget::initializeGL()
 {
@@ -169,16 +169,19 @@ void GLWidget::paintGL()
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 
-    glClear(GL_DEPTH_BUFFER_BIT);
+    // toggle anchor points off for clearer image
+    if (m_anchorsVisible) {
+        glClear(GL_DEPTH_BUFFER_BIT);
 
-    m_pointShader->bind();
-    m_pointShader->setUniform("proj",   m_camera.getProjection());
-    m_pointShader->setUniform("view",   m_camera.getView());
-    m_pointShader->setUniform("vSize",  m_vSize);
-    m_pointShader->setUniform("width",  width());
-    m_pointShader->setUniform("height", height());
-    m_arap.draw(m_pointShader, GL_POINTS);
-    m_pointShader->unbind();
+        m_pointShader->bind();
+        m_pointShader->setUniform("proj",   m_camera.getProjection());
+        m_pointShader->setUniform("view",   m_camera.getView());
+        m_pointShader->setUniform("vSize",  m_vSize);
+        m_pointShader->setUniform("width",  width());
+        m_pointShader->setUniform("height", height());
+        m_arap.draw(m_pointShader, GL_POINTS);
+        m_pointShader->unbind();
+    }
 }
 
 void GLWidget::resizeGL(int w, int h)
@@ -457,28 +460,6 @@ void GLWidget::keyReleaseEvent(QKeyEvent *event)
     case Qt::Key_D: m_sideways -= SPEED; break;
     case Qt::Key_F: m_vertical += SPEED; break;
     case Qt::Key_R: m_vertical -= SPEED; break;
-    case Qt::Key_Space:
-        togglePlayAnimation();
-        break;
-    case Qt::Key_T:
-            toggleRecordAnimation();
-        break;
-    case Qt::Key_L:
-        if (event->modifiers() & Qt::ControlModifier) {
-            saveAnimation();
-        } else {
-            m_forward -= SPEED;
-        }
-        break;
-    case Qt::Key_O:
-        if (event->modifiers() & Qt::ControlModifier) {
-            loadAnimation();
-        }
-        break;
-    case Qt::Key_Escape:
-        stopAnimation();
-        QApplication::quit();
-        break;
     }
 }
 
@@ -578,17 +559,16 @@ void GLWidget::tick()
 
         std::vector<Eigen::Vector3f> frameVertices;
         if (m_animation.getFrameAtTime(playbackTime, frameVertices)) {
-            // Use the public method to set vertices
             m_arap.getShape().setVertices(frameVertices);
         }
 
-        // Loop if desired
+        // loop if desired
         if (m_animation.isLooping() && playbackTime > m_animation.getDuration()) {
             playbackTime = 0.0f;
         }
     }
 
-    // Reset playback time when not playing
+    //rReset playback time when not playing
     if (!m_animation.isPlaying()) {
         playbackTime = 0.0f;
     }
@@ -620,3 +600,7 @@ Eigen::Vector3f GLWidget::transformToWorldRay(int x, int y)
     return Eigen::Vector3f(transformed_coords.x(), transformed_coords.y(), transformed_coords.z()).normalized();
 }
 
+void GLWidget::setAnchorsVisible(bool visible) {
+    m_anchorsVisible = visible;
+    update(); // toggle anchors on/off
+}

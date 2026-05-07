@@ -20,13 +20,6 @@
 class GLWidget : public QOpenGLWidget
 {
     Q_OBJECT
-#include "animation.h"
-
-    // In GLWidget class, add:
-private:
-    Animation m_animation;
-    bool m_animationRecording = false;
-    bool m_animationPlaying = false;
 
 public slots:
     void toggleRecordAnimation();
@@ -54,6 +47,11 @@ public:
     void loadMeshFromFile(const std::string &path);
 
 
+    bool isAnimationRecording() const { return m_animationRecording; }
+    bool isAnimationPlaying() const { return m_animationPlaying; }
+    void setAnchorsVisible(bool visible);
+
+
 private:
     static const int FRAMES_TO_AVERAGE = 30;
 
@@ -70,8 +68,6 @@ private:
     void wheelEvent       (QWheelEvent *event) override;
     void keyPressEvent    (QKeyEvent   *event) override;
     void keyReleaseEvent  (QKeyEvent   *event) override;
-
-private:
 
 private:
     QElapsedTimer m_deltaTimeProvider; // For measuring elapsed time
@@ -107,6 +103,11 @@ private:
     float m_movementScaling;
     float m_vertexSelectionThreshold;
     float m_vSize;
+
+    Animation m_animation;
+    bool m_animationRecording = false;
+    bool m_animationPlaying = false;
+    bool m_anchorsVisible = true;
 
 private slots:
 

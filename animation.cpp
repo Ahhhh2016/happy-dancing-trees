@@ -18,7 +18,7 @@ void Animation::startRecording() {
     m_playing = false;
     m_duration = 0.0f;
     m_recordStartTime = std::chrono::steady_clock::now();
-    std::cout << "Animation recording started" << std::endl;
+    std::cout << "Now recording!" << std::endl;
 }
 
 void Animation::stopRecording() {
@@ -26,7 +26,7 @@ void Animation::stopRecording() {
     if (!m_keyframes.empty()) {
         m_duration = m_keyframes.back().timestamp;
     }
-    std::cout << "Animation recording stopped. " << m_keyframes.size()
+    std::cout << "Recording stopped. " << m_keyframes.size()
               << " frames, " << m_duration << " seconds" << std::endl;
 }
 
@@ -62,12 +62,12 @@ void Animation::startPlayback() {
     m_recording = false;
     m_playbackTime = 0.0f;
     m_playbackStartTime = std::chrono::steady_clock::now();
-    std::cout << "Animation playback started" << std::endl;
+    std::cout << "Playback started" << std::endl;
 }
 
 void Animation::stopPlayback() {
     m_playing = false;
-    std::cout << "Animation playback stopped" << std::endl;
+    std::cout << "Playback stopped" << std::endl;
 }
 
 bool Animation::isPlaying() const {
