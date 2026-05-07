@@ -34,6 +34,7 @@ public:
     void setUniform(const std::string &name, float f);
     void setUniform(const std::string &name, int   i);
     void setUniform(const std::string &name, bool  b);
+    void setUniform(const std::string &name, const Eigen::Vector3f &v);
     template<typename type, int n, int m>
     void setUniform(const std::string &name, const Eigen::Matrix<type, n, m> &mat)
     {

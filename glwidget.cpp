@@ -169,6 +169,12 @@ void GLWidget::paintGL()
         m_shader->bind();
         m_shader->setUniform("proj", m_camera.getProjection());
         m_shader->setUniform("view", m_camera.getView());
+        // Global lights: brighter ambient so grazing / back-lit areas stay readable;
+        // diffuse scale in shader.frag is tuned down so highlights do not clip as much.
+        m_shader->setUniform("ambientColor", Eigen::Vector3f(0.48f, 0.48f, 0.52f));
+        // Light in view space stays fixed to the camera; orbiting the view no longer
+        // drags highlights as if the lamp were fixed in the world.
+        m_shader->setUniform("keyLightPosView", Eigen::Vector3f(-2.f, 2.f, -3.f));
         m_arap.draw(m_shader);
         m_shader->unbind();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);

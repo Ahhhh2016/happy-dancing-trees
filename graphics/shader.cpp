@@ -117,6 +117,11 @@ void Shader::setUniform(const std::string &name, bool b)
     glUniform1i(m_uniforms[name], static_cast<GLint>(b));
 }
 
+void Shader::setUniform(const std::string &name, const Eigen::Vector3f &v)
+{
+    glUniform3f(m_uniforms[name], v(0), v(1), v(2));
+}
+
 // ================== Creating the Program
 
 void Shader::createProgramID()
