@@ -158,13 +158,16 @@ void GLWidget::initializeGL()
 
 void GLWidget::paintGL()
 {
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (m_meshLoaded && m_shader != nullptr) {
+        // Toggle wireframe via polygon mode so it works for any mesh,
+        // not just those with tet indices.
         glPolygonMode(GL_FRONT_AND_BACK, m_wireframe ? GL_LINE : GL_FILL);
         m_shader->bind();
         m_shader->setUniform("proj", m_camera.getProjection());
         m_shader->setUniform("view", m_camera.getView());
-        m_arap.draw(m_shader, GL_TRIANGLES);
+        m_arap.draw(m_shader);
         m_shader->unbind();
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
@@ -361,6 +364,7 @@ void GLWidget::loadMeshFromFile(const std::string &path)
 
     // Initialize ARAP with the mesh (and ARAP-L metadata when available).
     Eigen::Vector3f coeffMin, coeffMax;
+<<<<<<< HEAD
     if (hasMeta) {
         m_arap.init(coeffMin, coeffMax, vertices, triangles, meta);
     } else {
@@ -373,6 +377,11 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     // subsequent ARAP::move() calls.
     if (textured) {
         m_arap.initShapeWithTexture(vertices, triangles, cornerUVs, texId);
+=======
+    m_arap.init(coeffMin, coeffMax, vertices, triangles);
+    if (textured) {
+        m_arap.initTexture(vertices, triangles, cornerUVs, texId);
+>>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
     }
 
     float extentLength = (coeffMax - coeffMin).norm();
@@ -545,5 +554,4 @@ Eigen::Vector3f GLWidget::transformToWorldRay(int x, int y)
 
     return Eigen::Vector3f(transformed_coords.x(), transformed_coords.y(), transformed_coords.z()).normalized();
 }
-
 

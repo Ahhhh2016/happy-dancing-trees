@@ -39,6 +39,7 @@ public:
     bool getAnchorPos(int lastSelected, Eigen::Vector3f& pos, Eigen::Vector3f ray, Eigen::Vector3f start);
     SelectMode select(Shader *shader, int closest_vertex);
     bool selectWithSpecifiedMode(Shader *shader, int closest_vertex, SelectMode mode);
+    void draw(Shader *shader);
 
     const std::vector<Eigen::Vector3f>& getVertices() const;
     const std::vector<Eigen::Vector3i>& getFaces() const;

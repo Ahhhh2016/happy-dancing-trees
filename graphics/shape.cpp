@@ -328,6 +328,7 @@ void Shape::setVertices(const vector<Vector3f> &vertices)
     m_vertices = vertices;
 
     if (m_hasTexture) {
+<<<<<<< HEAD
         // VBO layout when texturing: [positions | normals | uvs]. We need to
         // refresh positions and normals from the deformed vertex list but
         // keep the UV bytes intact so paint stays mapped to the surface.
@@ -374,11 +375,46 @@ void Shape::setVertices(const vector<Vector3f> &vertices)
         glBufferSubData(GL_ARRAY_BUFFER, posBytes + normBytes, colorBytes, colors.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
+=======
+        vector<float> positions;
+        positions.reserve(m_faces.size() * 9);
+        for (const Vector3i &face : m_faces) {
+            for (int v : {face[0], face[1], face[2]}) {
+                positions.push_back(vertices[v].x());
+                positions.push_back(vertices[v].y());
+                positions.push_back(vertices[v].z());
+            }
+        }
 
-    if (m_tetVao != static_cast<GLuint>(-1)) {
-        glBindBuffer(GL_ARRAY_BUFFER, m_tetVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * vertices.size() * 3, vertices.data());
+        glBindBuffer(GL_ARRAY_BUFFER, m_surfaceVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, positions.size() * sizeof(float), positions.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    else {
+
+    vector<Vector3f> verts;
+    vector<Vector3f> normals;
+    vector<Vector3f> colors;
+    updateMesh(m_faces, vertices, verts, normals, colors);
+
+>>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
+
+
+        glBindBuffer(GL_ARRAY_BUFFER, m_surfaceVbo);
+        const GLsizeiptr posBytes = static_cast<GLsizeiptr>(sizeof(float) * verts.size() * 3);
+        const GLsizeiptr normBytes = static_cast<GLsizeiptr>(sizeof(float) * normals.size() * 3);
+        const GLsizeiptr colorBytes = static_cast<GLsizeiptr>(sizeof(float) * colors.size() * 3);
+        glBufferData(GL_ARRAY_BUFFER, posBytes + normBytes + colorBytes, nullptr, GL_DYNAMIC_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, posBytes, verts.data());
+        glBufferSubData(GL_ARRAY_BUFFER, posBytes, normBytes, normals.data());
+        glBufferSubData(GL_ARRAY_BUFFER, posBytes + normBytes, colorBytes, colors.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        if (m_tetVao != static_cast<GLuint>(-1)) {
+            glBindBuffer(GL_ARRAY_BUFFER, m_tetVbo);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * vertices.size() * 3, vertices.data());
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
     }
 }
 
@@ -502,6 +538,9 @@ bool Shape::getAnchorPos(int lastSelectedVertex, Vector3f &pos, Vector3f ray, Ve
 
 void Shape::selectHelper()
 {
+    if (m_hasTexture) {
+        return;
+    }
     vector<Vector3f> verts;
     vector<Vector3f> normals;
     vector<Vector3f> colors;
@@ -605,6 +644,55 @@ Vector3f Shape::getNormal(const Vector3i &face)
     return getNormal(face, m_vertices);
 }
 
+<<<<<<< HEAD
 const vector<Vector3f> &Shape::getVertices() const { return m_vertices; }
 const vector<Vector3i> &Shape::getFaces() const { return m_faces; }
 const unordered_set<int> &Shape::getAnchors() const { return m_anchors; }
+=======
+
+void Shape::draw(Shader *shader)
+{
+    Eigen::Matrix3f m3 = m_modelMatrix.topLeftCorner(3, 3);
+    Eigen::Matrix3f inverseTransposeModel = m3.inverse().transpose();
+
+    if (m_wireframe && m_tetVao != static_cast<GLuint>(-1)) {
+        shader->setUniform("wire", 1);
+        shader->setUniform("useTexture", 0);
+        shader->setUniform("model", m_modelMatrix);
+        shader->setUniform("inverseTransposeModel", inverseTransposeModel);
+        shader->setUniform("red", 1.0f);
+        shader->setUniform("green", 1.0f);
+        shader->setUniform("blue", 1.0f);
+        shader->setUniform("alpha", 1.0f);
+        glBindVertexArray(m_tetVao);
+        glDrawElements(GL_LINES, m_numTetVertices, GL_UNSIGNED_INT, reinterpret_cast<GLvoid *>(0));
+        glBindVertexArray(0);
+        return;
+    }
+
+    shader->setUniform("wire", 0);
+    shader->setUniform("model", m_modelMatrix);
+    shader->setUniform("inverseTransposeModel", inverseTransposeModel);
+    shader->setUniform("useTexture", m_hasTexture ? 1 : 0);
+    if (m_hasTexture && m_diffuseTex != 0) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_diffuseTex);
+        shader->setUniform("diffuseTex", 0);
+    }
+    shader->setUniform("red", m_red);
+    shader->setUniform("green", m_green);
+    shader->setUniform("blue", m_blue);
+    shader->setUniform("alpha", m_alpha);
+    glBindVertexArray(m_surfaceVao);
+    glDrawElements(GL_TRIANGLES, m_numSurfaceVertices, GL_UNSIGNED_INT, reinterpret_cast<GLvoid *>(0));
+    glBindVertexArray(0);
+    if (m_hasTexture && m_diffuseTex != 0) {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+}
+
+
+const vector<Vector3f> &Shape::getVertices() { return m_vertices; }
+const vector<Vector3i> &Shape::getFaces() { return m_faces; }
+const unordered_set<int> &Shape::getAnchors() { return m_anchors; }
+>>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
