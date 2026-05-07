@@ -188,13 +188,40 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPolylines, maxTriangleArea);
 
-        std::vector<bool> hostMerging(V2.rows(), false);
+        std::vector<bool> mergeFront(V2.rows(), false);
+        std::vector<bool> mergeBack(V2.rows(), false);
         std::set<int> armpitEndpointSet;
         for (size_t li = 0; li < bpPolylines.size(); li++) {
-            std::vector<int> outsideBp = splitAlongBp(V2, F2, bpPolylines[li], limbInteriorSamples[li]);
-            if ((int)hostMerging.size() < V2.rows()) hostMerging.resize(V2.rows(), false);
-            for (int idx : outsideBp) {
-                if (idx >= 0 && idx < V2.rows()) hostMerging[idx] = true;
+            std::vector<int> interiorDups;
+            std::vector<int> outsideBp = splitAlongBp(V2, F2, bpPolylines[li], limbInteriorSamples[li],
+                                                      &interiorDups);
+            // splitAlongBp may append dup vertices; grow masks to match V2.
+            if ((int)mergeFront.size() < V2.rows()) {
+                mergeFront.resize(V2.rows(), false);
+                mergeBack.resize(V2.rows(), false);
+            }
+            if (outsideBp.size() >= 2) {
+                const int ep0 = outsideBp.front();
+                const int ep1 = outsideBp.back();
+                if (ep0 >= 0 && ep0 < (int)mergeFront.size()) {
+                    mergeFront[ep0] = mergeBack[ep0] = true;
+                }
+                if (ep1 >= 0 && ep1 < (int)mergeFront.size()) {
+                    mergeFront[ep1] = mergeBack[ep1] = true;
+                }
+                for (size_t ii = 1; ii + 1 < outsideBp.size(); ++ii) {
+                    const int orig = outsideBp[ii];
+                    if (orig >= 0 && orig < (int)mergeFront.size()) {
+                        mergeFront[orig] = true;
+                        mergeBack[orig] = false;
+                    }
+                }
+            }
+            for (int dup : interiorDups) {
+                if (dup >= 0 && dup < (int)mergeFront.size()) {
+                    mergeFront[dup] = false;
+                    mergeBack[dup] = true;
+                }
             }
             if (outsideBp.size() >= 2) {
                 armpitEndpointSet.insert(outsideBp.front());
@@ -203,16 +230,19 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         }
 
         auto isDirichlet = buildIsDirichlet(V2, V, n);
-        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, hostMerging);
+        MeshPart part = createFrontBack(V2, F2, isDirichlet, region.depthOrder, mergeFront, mergeBack);
         for (int idx : armpitEndpointSet) {
             if (idx >= 0 && idx < V2.rows())
                 part.armpitPairs.push_back({idx, idx + (int)V2.rows()});
         }
         m_meshParts.push_back(part);
 
-        int mCount = 0; for (bool b : hostMerging) if (b) mCount++;
+        int mCount = 0;
+        for (int i = 0; i < (int)mergeFront.size(); ++i) {
+            if (mergeFront[i] || mergeBack[i]) ++mCount;
+        }
         std::cout << "Host V2=" << V2.rows() << " F2=" << F2.rows()
-                  << " merging(outside Bp)=" << mCount << std::endl;
+                  << " merging(Bp front|back sheets)=" << mCount << std::endl;
     }
 
     // 4) Leg CDT using D_p U B_p.
@@ -225,7 +255,7 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         triangulateRegion(region, V, n, V2, F2, {}, maxTriangleArea);
         auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
         auto isMerging = buildIsMerging(V2, bpPolylines[li], 0.5);
-        m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
+        m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging, isMerging));
 
         int mCount = 0; for (bool b : isMerging) if (b) mCount++;
         std::cout << "Limb V2=" << V2.rows() << " F2=" << F2.rows()
@@ -319,7 +349,8 @@ Eigen::Vector2d monster::getLimbInteriorSample(const Region& region) const {
 MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
                                   const std::vector<bool>& isDirichletIn,
                                   int depthOrder,
-                                  const std::vector<bool>& isMergingIn) {
+                                  const std::vector<bool>& isMergingFrontIn,
+                                  const std::vector<bool>& isMergingBackIn) {
     // Mark the first n vertices as Dirichlet — these are the original boundary
     // points (Dp) that will be pinned to z=0 in the Poisson solve
     std::vector<bool> isDirichlet = isDirichletIn;
@@ -390,14 +421,19 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
     part.isDirichlet.resize(totalV, false);
     part.isMerging.resize(totalV, false);
 
+    auto mergesFront = [&](int srcIdx) {
+        return srcIdx < (int)isMergingFrontIn.size() && isMergingFrontIn[srcIdx];
+    };
+    auto mergesBack = [&](int srcIdx) {
+        return srcIdx < (int)isMergingBackIn.size() && isMergingBackIn[srcIdx];
+    };
     for (int i = 0; i < totalV; i++) {
         bool isFront = (i < frontCount);
         int srcIdx = isFront ? i : (i - frontCount);
-        // Dirichlet: first n vertices are on Dp
-        part.isDirichlet[i] = isDirichletIn[srcIdx] && !isMergingIn[srcIdx];
-        // Merging: propagate from input, for both front and back copies
-        if (!isMergingIn.empty())
-            part.isMerging[i] = isMergingIn[srcIdx];
+        // Dirichlet: first n vertices are on Dp (skip if merging on either sheet)
+        part.isDirichlet[i] = isDirichletIn[srcIdx] && !mergesFront(srcIdx) && !mergesBack(srcIdx);
+        // Bp welding: only the sheet(s) marked true participate in seam pass 1
+        part.isMerging[i] = isFront ? mergesFront(srcIdx) : mergesBack(srcIdx);
     }
 
     // Representative XY for ARAP-L depth proxies (interior front verts; fallback to all front).
@@ -430,7 +466,9 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
 
 std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                            const std::vector<Eigen::Vector2f>& bpPolyline,
-                           const Eigen::Vector2d& limbInteriorSample) {
+                           const Eigen::Vector2d& limbInteriorSample,
+                           std::vector<int>* outInteriorDupIndices) {
+    if (outInteriorDupIndices) outInteriorDupIndices->clear();
     if (bpPolyline.size() < 2) return {};
 
     constexpr double kMatchEps2 = 1e-2; // (0.1)^2
@@ -461,6 +499,7 @@ std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
         const int dup = nOld + k;
         V2.row(dup) = V2.row(orig);
         dupMap[orig] = dup;
+        if (outInteriorDupIndices) outInteriorDupIndices->push_back(dup);
     }
 
     auto sideOfPolyline = [&](const Eigen::Vector2d& x) {

@@ -85,16 +85,21 @@ private:
                            const std::vector<std::vector<Eigen::Vector2f>>& interiorPolylines = {},
                            double maxTriangleArea = 100.0);
 
-    // Step 2: Duplicate front/back of mesh
+    // Step 2: Duplicate front/back of mesh. Per-planar-vertex merging can differ
+    // by sheet: host Bp uses front-only on outside lip (orig) and back-only on
+    // inside lip (dup); limbs pass the same mask for both.
     MeshPart createFrontBack(const Eigen::MatrixXd& V2, const Eigen::MatrixXi& F2,
                              const std::vector<bool>& isDirichletIn,
                              int depthOrder,
-                             const std::vector<bool>& isMergingIn);
+                             const std::vector<bool>& isMergingFrontIn,
+                             const std::vector<bool>& isMergingBackIn);
 
-    // Step 3: Split host mesh along Bp to create a hole for the attachment
+    // Step 3: Split host mesh along Bp to create a hole for the attachment.
+    // If non-null, appends planar indices of duplicated interior Bp vertices (dup lip).
     std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
                       const std::vector<Eigen::Vector2f>& bpPolyline,
-                      const Eigen::Vector2d& limbInteriorSample);
+                      const Eigen::Vector2d& limbInteriorSample,
+                      std::vector<int>* outInteriorDupIndices = nullptr);
 
     // Step 4: Get merging boundary points from a region
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
