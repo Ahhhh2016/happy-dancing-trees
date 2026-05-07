@@ -247,3 +247,11 @@ void ARAP::initializeSolve() {
     if (m_solver.info() != Eigen::Success)
         std::cout << "Solver Error" << std::endl;
 }
+
+void ARAP::resetToRestPose() {
+    m_shape.setVertices(m_p);
+    // Clear anchors
+    m_shape.clearAnchors();
+    m_lastAnchors.clear();
+    initializeSolve();
+}

@@ -637,6 +637,9 @@ void Shape::draw(Shader *shader)
     }
 }
 
+void Shape::clearAnchors() {
+    m_anchors.clear();
+}
 
 const vector<Vector3f> &Shape::getVertices() { return m_vertices; }
 const vector<Vector3i> &Shape::getFaces() { return m_faces; }

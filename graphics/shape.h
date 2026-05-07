@@ -41,6 +41,8 @@ public:
     bool selectWithSpecifiedMode(Shader *shader, int closest_vertex, SelectMode mode);
     void draw(Shader *shader);
 
+    void clearAnchors();
+
     const std::vector<Eigen::Vector3f>& getVertices();
     const std::vector<Eigen::Vector3i>& getFaces();
     const std::unordered_set<int>& getAnchors();

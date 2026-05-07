@@ -6,6 +6,9 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QFile>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QtCore/qdir.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -41,6 +44,7 @@ GLWidget::GLWidget(QWidget *parent) :
     QApplication::setOverrideCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::StrongFocus);
     connect(&m_intervalTimer, SIGNAL(timeout()), this, SLOT(tick()));
+
 }
 
 GLWidget::~GLWidget()
@@ -51,6 +55,7 @@ GLWidget::~GLWidget()
         m_shader = nullptr;
     }
     m_mesh.destroyGL();
+    m_arap.destroyGL();
     doneCurrent();
 }
 
@@ -72,6 +77,7 @@ void GLWidget::clearMesh()
     if (m_glInitialized) {
         makeCurrent();
         m_mesh.destroyGL();
+        m_arap.destroyGL();
         doneCurrent();
     }
     m_meshLoaded = false;
@@ -307,6 +313,8 @@ void GLWidget::loadMeshFromFile(const std::string &path)
         m_arap.initTexture(vertices, triangles, cornerUVs, texId);
     }
 
+
+
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;
     m_movementScaling = extentLength * 0.5f;
@@ -390,9 +398,16 @@ void GLWidget::mouseMoveEvent(QMouseEvent *event)
         }
     }
 
+    // In mouseMoveEvent, when dragging an anchor:
+    if (m_lastSelectedVertex != -1 && m_arap.getAnchorPos(m_lastSelectedVertex, pos, ray, m_camera.getPosition())) {
+        m_arap.move(m_lastSelectedVertex, pos);
+    }
+
     // Set last mouse coordinates
     m_lastX = currX;
     m_lastY = currY;
+
+
 }
 
 void GLWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -426,6 +441,7 @@ void GLWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Equal: m_vSize *= 11.0f / 10.0f; break;
     case Qt::Key_Minus: m_vSize *= 10.0f / 11.0f; break;
     case Qt::Key_Escape: QApplication::quit();
+
     }
 }
 
@@ -441,6 +457,95 @@ void GLWidget::keyReleaseEvent(QKeyEvent *event)
     case Qt::Key_D: m_sideways -= SPEED; break;
     case Qt::Key_F: m_vertical += SPEED; break;
     case Qt::Key_R: m_vertical -= SPEED; break;
+    case Qt::Key_Space:
+        togglePlayAnimation();
+        break;
+    case Qt::Key_T:
+            toggleRecordAnimation();
+        break;
+    case Qt::Key_L:
+        if (event->modifiers() & Qt::ControlModifier) {
+            saveAnimation();
+        } else {
+            m_forward -= SPEED;
+        }
+        break;
+    case Qt::Key_O:
+        if (event->modifiers() & Qt::ControlModifier) {
+            loadAnimation();
+        }
+        break;
+    case Qt::Key_Escape:
+        stopAnimation();
+        QApplication::quit();
+        break;
+    }
+}
+
+// animation interfacing
+void GLWidget::toggleRecordAnimation() {
+    if (m_animation.isRecording()) {
+        m_animation.stopRecording();
+        m_animationRecording = false;
+        std::cout << "Recording stopped!" << std::endl;
+    } else {
+        m_animation.startRecording();
+        m_animationRecording = true;
+        m_animationPlaying = false;
+        if (m_animation.isPlaying()) {
+            m_animation.stopPlayback();
+        }
+        std::cout << "Recording!" << std::endl;
+    }
+}
+
+void GLWidget::togglePlayAnimation() {
+    if (m_animation.isPlaying()) {
+        m_animation.stopPlayback();
+        m_animationPlaying = false;
+        std::cout << "Playback stopped" << std::endl;
+    } else {
+        if (m_animation.getFrameCount() == 0) {
+            std::cerr << "No animation recorded!" << std::endl;
+            QMessageBox::warning(this, "No Animation", "Record an animation first!");
+            return;
+        }
+        m_animation.startPlayback();
+        m_animationPlaying = true;
+        m_animationRecording = false;
+        if (m_animation.isRecording()) {
+            m_animation.stopRecording();
+        }
+        std::cout << "Playback started!" << std::endl;
+    }
+}
+
+void GLWidget::stopAnimation() {
+    if (m_animation.isRecording()) {
+        m_animation.stopRecording();
+    }
+    if (m_animation.isPlaying()) {
+        m_animation.stopPlayback();
+    }
+    m_animationRecording = false;
+    m_animationPlaying = false;
+}
+
+void GLWidget::saveAnimation() {
+    QString filename = QFileDialog::getSaveFileName(this, "Save Animation",
+                                                    QDir::currentPath(),
+                                                    "Animation Files (*.anim)");
+    if (!filename.isEmpty()) {
+        m_animation.saveToFile(filename.toStdString());
+    }
+}
+
+void GLWidget::loadAnimation() {
+    QString filename = QFileDialog::getOpenFileName(this, "Load Animation",
+                                                    QDir::currentPath(),
+                                                    "Animation Files (*.anim)");
+    if (!filename.isEmpty()) {
+        m_animation.loadFromFile(filename.toStdString());
     }
 }
 
@@ -449,6 +554,44 @@ void GLWidget::keyReleaseEvent(QKeyEvent *event)
 void GLWidget::tick()
 {
     float deltaSeconds = m_deltaTimeProvider.restart() / 1000.0f;
+
+    // handle animation recording
+    if (m_animation.isRecording() && m_meshLoaded) {
+        const auto& verts = m_arap.getShape().getVertices();
+        std::vector<Eigen::Vector3f> verticesCopy = verts;
+
+        std::vector<Eigen::Vector3f> anchorPositions;
+        const auto& anchors = m_arap.getShape().getAnchors();
+        for (int idx : anchors) {
+            if (idx < (int)verticesCopy.size()) {
+                anchorPositions.push_back(verticesCopy[idx]);
+            }
+        }
+        m_animation.recordFrame(verticesCopy, anchorPositions);
+    }
+
+    // handle animation playback
+    static float playbackTime = 0.0f;
+
+    if (m_animation.isPlaying() && m_meshLoaded) {
+        playbackTime += deltaSeconds;
+
+        std::vector<Eigen::Vector3f> frameVertices;
+        if (m_animation.getFrameAtTime(playbackTime, frameVertices)) {
+            // Use the public method to set vertices
+            m_arap.getShape().setVertices(frameVertices);
+        }
+
+        // Loop if desired
+        if (m_animation.isLooping() && playbackTime > m_animation.getDuration()) {
+            playbackTime = 0.0f;
+        }
+    }
+
+    // Reset playback time when not playing
+    if (!m_animation.isPlaying()) {
+        playbackTime = 0.0f;
+    }
 
     auto look = m_camera.getLook();
     look.y() = 0;

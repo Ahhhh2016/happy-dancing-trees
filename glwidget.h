@@ -1,5 +1,6 @@
 #pragma once
 
+#include "animation.h"
 #ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION
 #endif
@@ -13,16 +14,31 @@
 #include <QElapsedTimer>
 #include <QPointF>
 #include <QTimer>
-#include <memory>
 #include <string>
+#include "animation.h"
 
 class GLWidget : public QOpenGLWidget
 {
     Q_OBJECT
+#include "animation.h"
 
+    // In GLWidget class, add:
+private:
+    Animation m_animation;
+    bool m_animationRecording = false;
+    bool m_animationPlaying = false;
+
+public slots:
+    void toggleRecordAnimation();
+    void togglePlayAnimation();
+    void stopAnimation();
+    void saveAnimation();
+    void loadAnimation();
 public:
     GLWidget(QWidget *parent = nullptr);
     ~GLWidget();
+
+    bool m_isAnimating = false;
 
     // Queue an OBJ to display. If GL is already initialized, loads immediately.
     void setMeshPath(const std::string &path);
@@ -36,6 +52,7 @@ public:
     Eigen::Vector3f transformToWorldRay(int x, int y);
 
     void loadMeshFromFile(const std::string &path);
+
 
 private:
     static const int FRAMES_TO_AVERAGE = 30;

@@ -61,6 +61,9 @@ add_executable(${PROJECT_NAME}
   util/unsupportedeigenthing/OpenGLSupport
 
   resources/shaders/shaders.qrc
+
+  animation.h animation.cpp
+
 )
 
 # GLEW: this creates its library and allows you to `#include "GL/glew.h"`
