@@ -367,6 +367,7 @@ void Shape::setVertices(const vector<Vector3f> &vertices)
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
     }
+    buildAnchorVBO();
 }
 
 void Shape::setVertices(const vector<Vector3f> &vertices, const vector<Vector3f> &normals)
@@ -505,6 +506,10 @@ void Shape::selectHelper()
     glBufferSubData(GL_ARRAY_BUFFER, 0, posBytes, verts.data());
     glBufferSubData(GL_ARRAY_BUFFER, posBytes, normBytes, normals.data());
     glBufferSubData(GL_ARRAY_BUFFER, posBytes + normBytes, colorBytes, colors.data());
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<GLvoid *>(posBytes + normBytes));
+
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
@@ -523,6 +528,7 @@ SelectMode Shape::select(Shader *shader, int closest_vertex)
     }
 
     selectHelper();
+    buildAnchorVBO();
     return vertexIsNowSelected ? SelectMode::Anchor : SelectMode::Unanchor;
 }
 
@@ -547,6 +553,7 @@ bool Shape::selectWithSpecifiedMode(Shader *shader, int closest_vertex, SelectMo
     }
 
     selectHelper();
+    buildAnchorVBO();
     return true;
 }
 
@@ -641,7 +648,67 @@ void Shape::clearAnchors() {
     m_anchors.clear();
 }
 
+void Shape::buildAnchorVBO()
+{
+    // Destroy old anchor VBO if exists
+    if (m_anchorVao != 0) {
+        glDeleteVertexArrays(1, &m_anchorVao);
+        glDeleteBuffers(1, &m_anchorVbo);
+    }
+    m_anchorVao = 0;
+    m_anchorVbo = 0;
+    m_numAnchors = 0;
 
+    if (m_anchors.empty()) return;
+
+    // Build position + color arrays for anchors only
+    std::vector<float> data; // interleaved: x,y,z, r,g,b
+    data.reserve(m_anchors.size() * 6);
+
+    for (int idx : m_anchors) {
+        if (idx < 0 || idx >= static_cast<int>(m_vertices.size())) continue;
+        const Vector3f& pos = m_vertices[idx];
+        // Position
+        data.push_back(pos.x());
+        data.push_back(pos.y());
+        data.push_back(pos.z());
+        // Color: black for anchors
+        data.push_back(0.0f);
+        data.push_back(0.0f);
+        data.push_back(0.0f);
+        m_numAnchors++;
+    }
+
+    if (m_numAnchors == 0) return;
+
+    glGenVertexArrays(1, &m_anchorVao);
+    glGenBuffers(1, &m_anchorVbo);
+    glBindVertexArray(m_anchorVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_anchorVbo);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+
+    // Position: location 0, stride = 6 floats, offset = 0
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), static_cast<GLvoid*>(0));
+    // Color: location 2, stride = 6 floats, offset = 12 bytes
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<GLvoid*>(12));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Shape::drawAnchors(Shader *shader)
+{
+    if (m_numAnchors == 0 || m_anchorVao == 0) return;
+
+    shader->setUniform("model", m_modelMatrix);
+    Eigen::Matrix3f id = Eigen::Matrix3f::Identity();
+    shader->setUniform("inverseTransposeModel", id);
+    glBindVertexArray(m_anchorVao);
+    glDrawArrays(GL_POINTS, 0, m_numAnchors);
+    glBindVertexArray(0);
+}
 
 const vector<Vector3f> &Shape::getVertices() const { return m_vertices; }
 const vector<Vector3i> &Shape::getFaces() const { return m_faces; }

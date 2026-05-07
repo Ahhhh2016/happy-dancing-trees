@@ -190,7 +190,8 @@ void GLWidget::paintGL()
         m_pointShader->setUniform("vSize",  m_vSize);
         m_pointShader->setUniform("width",  width());
         m_pointShader->setUniform("height", height());
-        m_arap.draw(m_pointShader, GL_POINTS);
+       // m_arap.draw(m_pointShader, GL_POINTS); anchor colors don't change with this.
+        m_arap.getShape().drawAnchors(m_pointShader);
         m_pointShader->unbind();
     }
 }
