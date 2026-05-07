@@ -4,6 +4,8 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QFileInfo>
+#include <fstream>
+#include <sstream>
 #include <QImage>
 #include <QFile>
 #include <QFileDialog>
@@ -73,14 +75,16 @@ void GLWidget::setMeshPath(const std::string &path)
 
 void GLWidget::clearMesh()
 {
+    stopAnimation();
+    m_meshLoaded = false;
     m_pendingMeshPath.clear();
     if (m_glInitialized) {
         makeCurrent();
+        m_arap.clearLayeringConstraints();
         m_mesh.destroyGL();
         m_arap.destroyGL();
         doneCurrent();
     }
-    m_meshLoaded = false;
     update();
 }
 
@@ -109,6 +113,7 @@ Eigen::Vector3f GLWidget::MakeArap(Eigen::MatrixXd V, Eigen::MatrixXi T)
         triangles.emplace_back(T(r, 0), T(r, 1), T(r, 2));
     }
 
+    m_arap.clearLayeringConstraints();
     Eigen::Vector3f coeffMin = Eigen::Vector3f::Zero();
     Eigen::Vector3f coeffMax = Eigen::Vector3f::Zero();
     m_arap.init(coeffMin, coeffMax, vertices, triangles);
@@ -170,7 +175,7 @@ void GLWidget::paintGL()
     }
 
     // toggle anchor points off for clearer image
-    if (m_anchorsVisible) {
+    if (m_meshLoaded && m_anchorsVisible) {
         glClear(GL_DEPTH_BUFFER_BIT);
 
         m_pointShader->bind();
@@ -317,6 +322,7 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     }
 
 
+    applyArapConstraintsSidecar(path);
 
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;
@@ -603,4 +609,41 @@ Eigen::Vector3f GLWidget::transformToWorldRay(int x, int y)
 void GLWidget::setAnchorsVisible(bool visible) {
     m_anchorsVisible = visible;
     update(); // toggle anchors on/off
+}
+
+void GLWidget::applyArapConstraintsSidecar(const std::string &objPath)
+{
+    m_arap.clearLayeringConstraints();
+
+    QFileInfo fi(QString::fromStdString(objPath));
+    const QString sidecarPath =
+        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("_arap_constraints.txt");
+    std::ifstream in(sidecarPath.toStdString());
+    if (!in)
+        return;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::istringstream iss(line);
+        std::string cmd;
+        iss >> cmd;
+        if (cmd == "order") {
+            int i = 0, j = 0;
+            std::string ty;
+            if (iss >> i >> j >> ty) {
+                if (ty == "GEQ")
+                    m_arap.addOrderingConstraint(i, j, OrderingConstraint::GEQ);
+                else if (ty == "LEQ")
+                    m_arap.addOrderingConstraint(i, j, OrderingConstraint::LEQ);
+            }
+        } else if (cmd == "eq") {
+            int i = 0, j = 0;
+            if (iss >> i >> j) {
+                if (i != j)
+                    m_arap.addEqualityConstraint(i, j);
+            }
+        }
+    }
 }

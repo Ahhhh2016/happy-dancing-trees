@@ -50,35 +50,73 @@ void writeOBJWithPlanarUV(const std::string &path,
     }
 }
 
-// Sidecar file consumed by the ARAP-L deformer. Format is plain text:
-//   n <num_vertices>
-//   p <num_parts>
-//   <part_depth_0> <part_depth_1> ...
-//   v
-//   <partId_i> <curveType_i>     (curveType: 0=interior, 1=Dp, 2=Bp)
-//   eq <num_equality_pairs>
-//   <i> <j>                      (one pair per line)
-void writeArapLMetadata(const std::string &path, const StitchedMesh &mesh) {
+/// Vertex indices match \p V (same order as mesh OBJ). Lines: `order i j GEQ|LEQ`, `eq i j`.
+/// Camera looks from −z toward +z: **closer to viewer = smaller z**. Higher stroke depth = closer
+/// ⇒ limb z should be ≤ body z ⇒ use **LEQ** with (limbIdx, bodyIdx).
+void writeArapLayerConstraintsFile(const std::string &path,
+                                   const Eigen::MatrixXd &V,
+                                   const Eigen::VectorXi &sideFlags,
+                                   const std::vector<MeshPart> &parts,
+                                   double canvasW,
+                                   double canvasH) {
+    auto xformXY = [&](Eigen::Vector2d p) -> Eigen::Vector2d {
+        if (canvasW > 0.0 && canvasH > 0.0) {
+            p.x() = canvasW - p.x();
+            p.y() = canvasH - p.y();
+        }
+        return p;
+    };
+
+    auto nearestFrontVert = [&](const Eigen::Vector2d &xy) -> int {
+        int best = -1;
+        double bestd = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < V.rows(); ++i) {
+            if (sideFlags.size() > i && sideFlags(i) <= 0)
+                continue;
+            const double dx = V(i, 0) - xy.x();
+            const double dy = V(i, 1) - xy.y();
+            const double d2 = dx * dx + dy * dy;
+            if (d2 < bestd) {
+                bestd = d2;
+                best = i;
+            }
+        }
+        if (best >= 0)
+            return best;
+        for (int i = 0; i < V.rows(); ++i) {
+            const double dx = V(i, 0) - xy.x();
+            const double dy = V(i, 1) - xy.y();
+            const double d2 = dx * dx + dy * dy;
+            if (d2 < bestd) {
+                bestd = d2;
+                best = i;
+            }
+        }
+        return best;
+    };
+
     std::ofstream out(path);
     if (!out) {
-        std::cerr << "Failed to open ARAP-L metadata for writing: " << path << std::endl;
+        std::cerr << "Failed to write ARAP-L constraints: " << path << std::endl;
         return;
     }
-    const int n = static_cast<int>(mesh.V.rows());
-    out << "n " << n << "\n";
-    out << "p " << mesh.partDepth.size() << "\n";
-    for (int d : mesh.partDepth) out << d << " ";
-    out << "\n";
-    out << "v\n";
-    for (int i = 0; i < n; ++i) {
-        int curveType = 0;
-        if (i < static_cast<int>(mesh.isMerging.size()) && mesh.isMerging[i]) curveType = 2;
-        else if (i < static_cast<int>(mesh.isDirichlet.size()) && mesh.isDirichlet[i]) curveType = 1;
-        const int pid = (i < static_cast<int>(mesh.partId.size())) ? mesh.partId[i] : -1;
-        out << pid << " " << curveType << "\n";
+    out << "# ARAP-L: higher stroke depth = closer to viewer = smaller world z (camera at -z).\n";
+    out << "# LEQ i j  means  z[i] <= z[j]  (i is in front of / not behind j).\n";
+
+    for (std::size_t a = 0; a < parts.size(); ++a) {
+        for (std::size_t b = 0; b < parts.size(); ++b) {
+            if (a == b)
+                continue;
+            if (parts[a].depthOrder < parts[b].depthOrder) {
+                const Eigen::Vector2d xa = xformXY(parts[a].repXY);
+                const Eigen::Vector2d xb = xformXY(parts[b].repXY);
+                const int ia = nearestFrontVert(xa);
+                const int ib = nearestFrontVert(xb);
+                // b in front of a (closer) => z[ib] <= z[ia]
+                out << "order " << ib << " " << ia << " LEQ\n";
+            }
+        }
     }
-    out << "eq " << mesh.armpitPairs.size() << "\n";
-    for (const auto &p : mesh.armpitPairs) out << p.first << " " << p.second << "\n";
 }
 
 } // namespace
@@ -149,10 +187,6 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, bpPolylines, maxTriangleArea);
-        if (V2.rows() == 0 || F2.rows() == 0) {
-            std::cerr << "Skipping host region: empty triangulation." << std::endl;
-            continue;
-        }
 
         std::vector<bool> hostMerging(V2.rows(), false);
         std::set<int> armpitEndpointSet;
@@ -189,10 +223,6 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         Eigen::MatrixXi F2;
         int n;
         triangulateRegion(region, V, n, V2, F2, {}, maxTriangleArea);
-        if (V2.rows() == 0 || F2.rows() == 0) {
-            std::cerr << "Skipping limb region: empty triangulation." << std::endl;
-            continue;
-        }
         auto isDirichlet = buildIsDirichlet(V2, V, n, 0.1);
         auto isMerging = buildIsMerging(V2, bpPolylines[li], 0.5);
         m_meshParts.push_back(createFrontBack(V2, F2, isDirichlet, region.depthOrder, isMerging));
@@ -204,10 +234,6 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
 
     // 5) Stitch host outside-Bp to limb Bp by same-side seam welding.
     StitchedMesh result = stitchParts();
-    if (result.V.rows() == 0 || result.F.rows() == 0) {
-        std::cerr << "Stitched mesh empty, skipping export and inflation." << std::endl;
-        return result;
-    }
 
     // Qt stroke coords match the on-screen sketch, but the meshed embedding ended up
     // 180° out (both axes inverted vs. the drawing). Rotate the XY embedding about
@@ -225,30 +251,13 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
     }
     inflateMesh(result.V, result.F, isFront, result.isDirichlet, /*c=*/1.0);
 
-    // Apply per-layer z-offset so depth ordering is visible in the rest pose.
-    // Foreground parts (smaller partDepth) get pushed toward +z; background parts
-    // toward -z. This creates the staircase look you see in the ARAP-L paper —
-    // back legs sink behind body, front legs poke out in front.
-    if (!result.partDepth.empty()) {
-        int maxLayer = 0;
-        for (int d : result.partDepth) if (d > maxLayer) maxLayer = d;
-        if (maxLayer > 0) {
-            double maxAbsZ = 0.0;
-            for (int i = 0; i < result.V.rows(); ++i) {
-                const double az = std::abs(result.V(i, 2));
-                if (az > maxAbsZ) maxAbsZ = az;
-            }
-            const double canvasExtent = std::max(canvasW, canvasH);
-            const double layerDelta = std::max(0.02 * canvasExtent, 0.4 * maxAbsZ);
-            const double mid = 0.5 * static_cast<double>(maxLayer);
-            for (int i = 0; i < result.V.rows(); ++i) {
-                if (i >= static_cast<int>(result.partId.size())) continue;
-                const int pid = result.partId[i];
-                if (pid < 0 || pid >= static_cast<int>(result.partDepth.size())) continue;
-                const int d = result.partDepth[pid];
-                const double offset = (mid - d) * layerDelta;
-                result.V(i, 2) += offset;
-            }
+    if (result.vertexDepth.size() == static_cast<size_t>(result.V.rows())) {
+        const double bx = result.V.col(0).maxCoeff() - result.V.col(0).minCoeff();
+        const double by = result.V.col(1).maxCoeff() - result.V.col(1).minCoeff();
+        const double spanXY = std::max(bx, std::max(by, 1e-12));
+        const double layerScale = 0.08 * spanXY;
+        for (int i = 0; i < result.V.rows(); ++i) {
+            result.V(i, 2) -= layerScale * static_cast<double>(result.vertexDepth[i]);
         }
     }
 
@@ -259,7 +268,8 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
         V3D << result.V, Eigen::VectorXd::Zero(result.V.rows());
     }
     writeOBJWithPlanarUV("mesh12.obj", V3D, result.F, canvasW, canvasH);
-    writeArapLMetadata("mesh12_arapl.txt", result);
+    writeArapLayerConstraintsFile("mesh12_arap_constraints.txt", V3D, result.sideFlags, m_meshParts,
+                                  canvasW, canvasH);
 
     return result;
 }
@@ -379,7 +389,6 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
     const int frontCount = V2.rows();
     part.isDirichlet.resize(totalV, false);
     part.isMerging.resize(totalV, false);
-    part.partId.resize(totalV, -1);
 
     for (int i = 0; i < totalV; i++) {
         bool isFront = (i < frontCount);
@@ -389,17 +398,39 @@ MeshPart monster::createFrontBack(const Eigen::MatrixXd& V2, const Eigen::Matrix
         // Merging: propagate from input, for both front and back copies
         if (!isMergingIn.empty())
             part.isMerging[i] = isMergingIn[srcIdx];
-        // ARAP-L: front and back halves get different part ids so depth ordering
-        // can distinguish them. Layer index uses depthOrder; lowest is in front.
-        part.partId[i] = depthOrder * 2 + (isFront ? 0 : 1);
+    }
+
+    // Representative XY for ARAP-L depth proxies (interior front verts; fallback to all front).
+    {
+        double sx = 0.0, sy = 0.0;
+        int cnt = 0;
+        for (int i = 0; i < frontCount; ++i) {
+            if (!part.isDirichlet[i] && !part.isMerging[i]) {
+                sx += V_global(i, 0);
+                sy += V_global(i, 1);
+                ++cnt;
+            }
+        }
+        if (cnt == 0) {
+            for (int i = 0; i < frontCount; ++i) {
+                sx += V_global(i, 0);
+                sy += V_global(i, 1);
+                ++cnt;
+            }
+        }
+        if (cnt > 0) {
+            part.repXY = Eigen::Vector2d(sx / cnt, sy / cnt);
+        } else {
+            part.repXY = Eigen::Vector2d(V_global(0, 0), V_global(0, 1));
+        }
     }
 
     return part;
 }
 
 std::vector<int> monster::splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                           const std::vector<Eigen::Vector2f>& bpPolyline,
-                           const Eigen::Vector2d& limbInteriorSample) {
+                                       const std::vector<Eigen::Vector2f>& bpPolyline,
+                                       const Eigen::Vector2d& limbInteriorSample) {
     if (bpPolyline.size() < 2) return {};
 
     constexpr double kMatchEps2 = 1e-2; // (0.1)^2
@@ -494,13 +525,6 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
     }
 
     n = boundaryPoints.size();
-    if (n < 3) {
-        // Region has no usable boundary loop (can happen with overlapping strokes).
-        V.resize(0, 2);
-        V2.resize(0, 2);
-        F2.resize(0, 3);
-        return;
-    }
     std::vector<Eigen::Vector2f> allPoints = boundaryPoints;
     std::vector<std::vector<int>> interiorIndices;
     interiorIndices.reserve(interiorPolylines.size());
@@ -550,17 +574,16 @@ void monster::triangulateRegion(const Region& region, Eigen::MatrixXd& V, int& n
 
 StitchedMesh monster::stitchParts() {
     StitchedMesh result;
+    std::vector<int> vertexDepth;
+    vertexDepth.reserve(1024);
     int vOffset = 0;
-    int maxPartId = -1;
     for (auto& part : m_meshParts) {
         for (int i = 0; i < part.V.rows(); i++) {
             result.isDirichlet.push_back(part.isDirichlet[i]);
             result.isMerging.push_back(part.isMerging[i]);
-            const int pid = (i < static_cast<int>(part.partId.size())) ? part.partId[i] : -1;
-            result.partId.push_back(pid);
-            if (pid > maxPartId) maxPartId = pid;
             result.sideFlags.conservativeResize(result.sideFlags.size() + 1);
             result.sideFlags(result.sideFlags.size() - 1) = part.sideFlags(i);
+            vertexDepth.push_back(part.depthOrder);
         }
         int oldVRows = result.V.rows();
         result.V.conservativeResize(oldVRows + part.V.rows(), 2);
@@ -576,48 +599,19 @@ StitchedMesh monster::stitchParts() {
 
         vOffset += part.V.rows();
     }
-    // Build partDepth lookup: each partId -> linearized z-layer index.
-    // Smaller value = closer to camera. We give the front half of every region
-    // its own layer ahead of all back halves of less-foreground regions, which
-    // lets the ARAP-L inequality builder generate adjacent-layer pairs even
-    // for a single region (front-vs-back) and across regions (e.g. body+leg).
-    //
-    // Convention:
-    //   region.depthOrder = 0 means drawn first (background-most).
-    //   higher region.depthOrder = drawn later (closer to camera).
-    //   For a region with depthOrder X, given maxRegionDepth M:
-    //       partDepth[front] = 2 * (M - X)        // even, smaller = closer
-    //       partDepth[back]  = 2 * (M - X) + 1    // back half always behind its front
-    if (maxPartId >= 0) {
-        int maxRegionDepth = 0;
-        for (const auto &part : m_meshParts) {
-            if (part.depthOrder > maxRegionDepth) maxRegionDepth = part.depthOrder;
-        }
-
-        result.partDepth.assign(maxPartId + 1, 0);
-        for (const auto &part : m_meshParts) {
-            const int reverseDepth = maxRegionDepth - part.depthOrder;  // closer-to-camera wins
-            for (int i = 0; i < static_cast<int>(part.partId.size()); ++i) {
-                const int pid = part.partId[i];
-                if (pid < 0 || pid >= static_cast<int>(result.partDepth.size())) continue;
-                const bool isFrontHalf = (part.sideFlags(i) > 0);
-                result.partDepth[pid] = 2 * reverseDepth + (isFrontHalf ? 0 : 1);
-            }
-        }
-
-        std::cout << "ARAP-L part depths:";
-        for (int d : result.partDepth) std::cout << " " << d;
-        std::cout << std::endl;
-    }
-    weldSeams(result);
+    weldSeams(result, vertexDepth);
+    result.vertexDepth = std::move(vertexDepth);
     std::cout << "Final mesh: " << result.V.rows() << " vertices, "
               << result.F.rows() << " faces" << std::endl;
     return result;
 }
 
-void monster::weldSeams(StitchedMesh& mesh) {
+void monster::weldSeams(StitchedMesh& mesh, std::vector<int>& vertexDepth) {
     const double WELD_EPS = 0.5;
     const int n = mesh.V.rows();
+
+    if ((int)vertexDepth.size() != n)
+        vertexDepth.assign(n, 0);
 
     std::vector<int> remap(n);
     std::iota(remap.begin(), remap.end(), 0);
@@ -678,6 +672,12 @@ void monster::weldSeams(StitchedMesh& mesh) {
     };
     for (int i = 0; i < n; i++) remap[i] = findRoot(i);
 
+    std::vector<int> clusterDepth(n, std::numeric_limits<int>::min());
+    for (int i = 0; i < n; ++i) {
+        const int r = remap[i];
+        clusterDepth[r] = std::max(clusterDepth[r], vertexDepth[i]);
+    }
+
     // Apply remap to F
     for (int f = 0; f < mesh.F.rows(); f++)
         for (int c = 0; c < 3; c++)
@@ -694,7 +694,6 @@ void monster::weldSeams(StitchedMesh& mesh) {
     Eigen::MatrixXd newV(nNew, mesh.V.cols());
     Eigen::VectorXi newSideFlags(nNew);
     std::vector<bool> newDirichlet(nNew), newMerging(nNew);
-    std::vector<int> newPartId(nNew, -1);
     std::vector<std::pair<int,int>> newArmpitPairs;
 
     for (int i = 0; i < n; i++) {
@@ -703,10 +702,16 @@ void monster::weldSeams(StitchedMesh& mesh) {
         newSideFlags(reindex[i]) = mesh.sideFlags(i);
         newDirichlet[reindex[i]] = mesh.isDirichlet[i];
         newMerging[reindex[i]]   = mesh.isMerging[i];
-        if (i < static_cast<int>(mesh.partId.size())) {
-            newPartId[reindex[i]] = mesh.partId[i];
-        }
     }
+
+    std::vector<int> newDepth(nNew, 0);
+    for (int old = 0; old < n; ++old) {
+        if (reindex[old] == -1)
+            continue;
+        const int r = remap[old];
+        newDepth[reindex[old]] = clusterDepth[r];
+    }
+    vertexDepth = std::move(newDepth);
 
     // remap armpit pairs through both remap and reindex
     for (auto& p : mesh.armpitPairs) {
@@ -726,7 +731,6 @@ void monster::weldSeams(StitchedMesh& mesh) {
     mesh.isDirichlet = newDirichlet;
     mesh.isMerging = newMerging;
     mesh.armpitPairs = newArmpitPairs;
-    mesh.partId = newPartId;
 }
 
 std::vector<bool> monster::buildIsDirichlet(const Eigen::MatrixXd& V2,
@@ -865,4 +869,3 @@ void monster::inflateMesh(
     auto h0      = toSemiElliptical(h_tilde, isFront);
     for (int i = 0; i < V.rows(); ++i) V(i, 2) = h0(i);
 }
-

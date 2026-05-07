@@ -45,6 +45,7 @@ public:
     Eigen::Vector3f transformToWorldRay(int x, int y);
 
     void loadMeshFromFile(const std::string &path);
+    void applyArapConstraintsSidecar(const std::string &objPath);
 
 
     bool isAnimationRecording() const { return m_animationRecording; }

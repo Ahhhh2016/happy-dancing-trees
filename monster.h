@@ -34,7 +34,7 @@ struct Stroke {
 };
 
 struct Region {
-    std::vector<Stroke> boundaries; 
+    std::vector<Stroke> boundaries;
     // closing curves only stores in boundaries
 
     // Regions inherit the depthOrder of their open stroke boundary.
@@ -48,9 +48,9 @@ struct MeshPart {
     std::vector<bool> isDirichlet; // on Dp: h=0 in Poisson solve
     std::vector<bool> isMerging;      // on Bp: candidate for welding
     std::vector<std::pair<int,int>> armpitPairs;
-    // ARAP-L metadata: per-vertex part identifier (front/back halves get distinct ids).
-    std::vector<int> partId;
     int depthOrder;
+    /// Centroid XY of interior front vertices (pre canvas flip); used for ARAP-L ordering proxies.
+    Eigen::Vector2d repXY = Eigen::Vector2d::Zero();
 };
 
 struct StitchedMesh {
@@ -60,9 +60,8 @@ struct StitchedMesh {
     std::vector<bool> isDirichlet;
     std::vector<bool> isMerging;
     std::vector<std::pair<int,int>> armpitPairs; // front/back index pairs at Bp endpoints
-    // ARAP-L metadata, written to <basename>_arapl.txt for the deformer to consume.
-    std::vector<int> partId;            // size n
-    std::vector<int> partDepth;         // size num_parts
+    /// Per-vertex stroke depth (max among welded parts). Same length as V.rows() after stitch+weld.
+    std::vector<int> vertexDepth;
 };
 
 class monster {
@@ -94,21 +93,21 @@ private:
 
     // Step 3: Split host mesh along Bp to create a hole for the attachment
     std::vector<int> splitAlongBp(Eigen::MatrixXd& V2, Eigen::MatrixXi& F2,
-                      const std::vector<Eigen::Vector2f>& bpPolyline,
-                      const Eigen::Vector2d& limbInteriorSample);
+                                  const std::vector<Eigen::Vector2f>& bpPolyline,
+                                  const Eigen::Vector2d& limbInteriorSample);
 
     // Step 4: Get merging boundary points from a region
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
     Eigen::Vector2d getLimbInteriorSample(const Region& region) const;
 
-    void weldSeams(StitchedMesh& mesh);
+    void weldSeams(StitchedMesh& mesh, std::vector<int>& vertexDepth);
 
     std::vector<bool> buildIsDirichlet(const Eigen::MatrixXd& V2,
                                        const Eigen::MatrixXd& V_input,
                                        int n, double eps = kContourDirichletEps);
-    Eigen::SparseMatrix<double> buildCotangentLaplacian(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F); 
+    Eigen::SparseMatrix<double> buildCotangentLaplacian(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F);
     Eigen::VectorXd buildMass(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F); // for each triangle, computes 1/3 of the area to each of the three vertices (a_i)
-    Eigen::VectorXd buildRHS(const Eigen::VectorXd& a, const std::vector<bool>& isFront, double c); 
+    Eigen::VectorXd buildRHS(const Eigen::VectorXd& a, const std::vector<bool>& isFront, double c);
     Eigen::VectorXd solvePoisson(const Eigen::SparseMatrix<double>& L, const Eigen::VectorXd& rhs, const std::vector<bool>& isDirichlet);
     Eigen::VectorXd toSemiElliptical(const Eigen::VectorXd& h_tilde, const std::vector<bool>& isFront);
     void inflateMesh(Eigen::MatrixXd& V, const Eigen::MatrixXi& F, const std::vector<bool>& isFront, const std::vector<bool>& isDirichlet, double c);

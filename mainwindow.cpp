@@ -345,6 +345,10 @@ void MainWindow::setupCanvas2D() {
 }
 
 void MainWindow::onClearButtonClick() {
+    m_meshPreviewDebounceTimer.stop();
+
+    disconnect(m_canvas, &Canvas2D::meshPreviewDirty, this, nullptr);
+
     m_canvas->resize(m_canvas->parentWidget()->size().width(), m_canvas->parentWidget()->size().height());
     m_canvas->clearCanvas();
     if (m_glWidget) {
@@ -355,6 +359,10 @@ void MainWindow::onClearButtonClick() {
         m_brushToolRadio->setChecked(true);
     }
     m_canvas->setTool(Canvas2D::Tool::Brush);
+
+    connect(m_canvas, &Canvas2D::meshPreviewDirty, this, [this]() {
+        m_meshPreviewDebounceTimer.start();
+    });
 }
 
 void MainWindow::onUploadButtonClick() {

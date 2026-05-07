@@ -9,6 +9,14 @@
 
 class Shader;
 
+struct OrderingConstraint {
+    int i, j;
+    enum Type { GEQ, LEQ } type;
+};
+
+struct EqualityConstraint {
+    int i, j;
+};
 
 class ARAP
 {
@@ -33,6 +41,17 @@ public:
         m_shape.destroyGL();
         m_shape.clearAnchors();
     }
+
+    std::vector<OrderingConstraint> m_ordering_constraints;
+    std::vector<EqualityConstraint> m_equality_constraints;
+
+    Eigen::VectorXd solveZWithConstraints(const Eigen::VectorXd &pz_init, int vertex,
+                                          const Eigen::Vector3f &targetPosition);
+
+    void addOrderingConstraint(int i, int j, OrderingConstraint::Type type);
+    void addEqualityConstraint(int i, int j);
+    void clearLayeringConstraints();
+
 
     // shape.cpp delegations
     int getClosestVertex(Eigen::Vector3f start, Eigen::Vector3f ray, float threshold)
