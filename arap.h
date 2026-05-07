@@ -6,8 +6,20 @@
 #include <Eigen/SparseCholesky>
 #include <Eigen/Sparse>
 #include <map>
+#include <vector>
 
 class Shader;
+
+// 不等式约束：vertex i 的 z 必须相对 vertex j 满足 GEQ / LEQ（分层）
+struct OrderingConstraint {
+    int i, j;
+    enum Type { GEQ, LEQ } type;
+};
+
+// 等式约束：vertex i 和 j 的 z 必须相同（如背面吸附）
+struct EqualityConstraint {
+    int i, j;
+};
 
 class ARAP
 {
@@ -21,6 +33,11 @@ private:
     std::vector<std::vector<std::pair<int,float>>> m_neighbors;
     void initializeSolve();
 
+    std::vector<OrderingConstraint> m_ordering_constraints;
+    std::vector<EqualityConstraint> m_equality_constraints;
+
+    Eigen::VectorXd solveZWithConstraints(const Eigen::VectorXd &pz_init, int vertex,
+                                          const Eigen::Vector3f &targetPosition);
 
 public:
     ARAP();
@@ -32,6 +49,11 @@ public:
                      const std::vector<Eigen::Vector2f> &texcoordsPerCorner,
                      GLuint diffuseTexture);
     void move(int vertex, Eigen::Vector3f pos);
+
+    void addOrderingConstraint(int i, int j, OrderingConstraint::Type type);
+    void addEqualityConstraint(int i, int j);
+    void clearLayeringConstraints();
+
     std::map<int, Eigen::Vector3f> getNeighbors(Eigen::Vector3f &i);
     std::map<int, Eigen::Vector3f> getNeighborsByIndex(int idx);
 

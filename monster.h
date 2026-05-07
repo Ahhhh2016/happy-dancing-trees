@@ -49,6 +49,8 @@ struct MeshPart {
     std::vector<bool> isMerging;      // on Bp: candidate for welding
     std::vector<std::pair<int,int>> armpitPairs;
     int depthOrder;
+    /// Centroid XY of interior front vertices (pre canvas flip); used for ARAP-L ordering proxies.
+    Eigen::Vector2d repXY = Eigen::Vector2d::Zero();
 };
 
 struct StitchedMesh {
@@ -58,6 +60,8 @@ struct StitchedMesh {
     std::vector<bool> isDirichlet;
     std::vector<bool> isMerging;
     std::vector<std::pair<int,int>> armpitPairs; // front/back index pairs at Bp endpoints
+    /// Per-vertex stroke depth (max among welded parts). Same length as V.rows() after stitch+weld.
+    std::vector<int> vertexDepth;
 };
 
 class monster {
@@ -96,7 +100,7 @@ private:
     std::vector<Eigen::Vector2f> getMergingBoundaryPoints(const Region& region);
     Eigen::Vector2d getLimbInteriorSample(const Region& region) const;
 
-    void weldSeams(StitchedMesh& mesh);
+    void weldSeams(StitchedMesh& mesh, std::vector<int>& vertexDepth);
 
     std::vector<bool> buildIsDirichlet(const Eigen::MatrixXd& V2,
                                        const Eigen::MatrixXd& V_input,

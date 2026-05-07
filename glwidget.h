@@ -37,6 +37,9 @@ public:
 
     void loadMeshFromFile(const std::string &path);
 
+    /// Load mesh12_arap_constraints.txt next to the OBJ (if present) into ARAP-L.
+    void applyArapConstraintsSidecar(const std::string &objPath);
+
 private:
     static const int FRAMES_TO_AVERAGE = 30;
 

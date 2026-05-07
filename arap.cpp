@@ -127,10 +127,11 @@ void ARAP::move(int vertex, Vector3f targetPosition)
             b.row(i) = rhs.transpose();
         }
 
-        // solve L * p' = b per coordinate axis
+        // solve L * p' = b per coordinate axis (ARAP-L: x,y linear; z then layered projection)
         VectorXd px = m_solver.solve(b.col(0));
         VectorXd py = m_solver.solve(b.col(1));
         VectorXd pz = m_solver.solve(b.col(2));
+        pz = solveZWithConstraints(pz, vertex, targetPosition);
 
         // rebuild vertices
         for (int i = 0; i < n; i++)
@@ -145,6 +146,71 @@ void ARAP::move(int vertex, Vector3f targetPosition)
 
 }
 
+void ARAP::addOrderingConstraint(int i, int j, OrderingConstraint::Type type)
+{
+    m_ordering_constraints.push_back({i, j, type});
+}
+
+void ARAP::addEqualityConstraint(int i, int j)
+{
+    m_equality_constraints.push_back({i, j});
+}
+
+void ARAP::clearLayeringConstraints()
+{
+    m_ordering_constraints.clear();
+    m_equality_constraints.clear();
+}
+
+Eigen::VectorXd ARAP::solveZWithConstraints(const Eigen::VectorXd &pz_init, int vertex,
+                                            const Eigen::Vector3f &targetPosition)
+{
+    VectorXd pz = pz_init;
+
+    const int max_proj_iters = 20;
+    const float margin = 0.01f;
+
+    for (int iter = 0; iter < max_proj_iters; iter++) {
+        bool any_violated = false;
+
+        for (const auto &c : m_ordering_constraints) {
+            if (c.type == OrderingConstraint::GEQ) {
+                if (pz[c.i] < pz[c.j]) {
+                    float mid = 0.5f * static_cast<float>(pz[c.i] + pz[c.j]);
+                    pz[c.i] = static_cast<double>(mid + margin);
+                    pz[c.j] = static_cast<double>(mid - margin);
+                    any_violated = true;
+                }
+            } else {
+                if (pz[c.i] > pz[c.j]) {
+                    float mid = 0.5f * static_cast<float>(pz[c.i] + pz[c.j]);
+                    pz[c.i] = static_cast<double>(mid - margin);
+                    pz[c.j] = static_cast<double>(mid + margin);
+                    any_violated = true;
+                }
+            }
+        }
+
+        for (const auto &c : m_equality_constraints) {
+            float avg = 0.5f * static_cast<float>(pz[c.i] + pz[c.j]);
+            pz[c.i] = static_cast<double>(avg);
+            pz[c.j] = static_cast<double>(avg);
+        }
+
+        const auto &anchors = m_shape.getAnchors();
+        for (int a : anchors) {
+            if (a == vertex)
+                pz[a] = static_cast<double>(targetPosition.z());
+            else
+                pz[a] = static_cast<double>(m_p[a].z());
+        }
+
+        if (!any_violated)
+            break;
+    }
+
+    return pz;
+}
 
 std::map<int, Vector3f> ARAP::getNeighborsByIndex(int idx) {
     std::map<int, Vector3f> neighbors;

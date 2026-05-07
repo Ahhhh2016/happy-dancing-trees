@@ -2,7 +2,10 @@
 #include "util/tiny_obj_loader.h"
 
 #include <QApplication>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <fstream>
+#include <sstream>
 #include <QFileInfo>
 #include <QImage>
 #include <QFile>
@@ -72,6 +75,7 @@ void GLWidget::clearMesh()
     if (m_glInitialized) {
         makeCurrent();
         m_mesh.destroyGL();
+        m_arap.clearLayeringConstraints();
         doneCurrent();
     }
     m_meshLoaded = false;
@@ -105,8 +109,46 @@ Eigen::Vector3f GLWidget::MakeArap(Eigen::MatrixXd V, Eigen::MatrixXi T)
 
     Eigen::Vector3f coeffMin = Eigen::Vector3f::Zero();
     Eigen::Vector3f coeffMax = Eigen::Vector3f::Zero();
+    m_arap.clearLayeringConstraints();
     m_arap.init(coeffMin, coeffMax, vertices, triangles);
     return coeffMax - coeffMin;
+}
+
+void GLWidget::applyArapConstraintsSidecar(const std::string &objPath)
+{
+    m_arap.clearLayeringConstraints();
+
+    QFileInfo fi(QString::fromStdString(objPath));
+    const QString sidecarPath =
+        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("_arap_constraints.txt");
+    std::ifstream in(sidecarPath.toStdString());
+    if (!in)
+        return;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::istringstream iss(line);
+        std::string cmd;
+        iss >> cmd;
+        if (cmd == "order") {
+            int i = 0, j = 0;
+            std::string ty;
+            if (iss >> i >> j >> ty) {
+                if (ty == "GEQ")
+                    m_arap.addOrderingConstraint(i, j, OrderingConstraint::GEQ);
+                else if (ty == "LEQ")
+                    m_arap.addOrderingConstraint(i, j, OrderingConstraint::LEQ);
+            }
+        } else if (cmd == "eq") {
+            int i = 0, j = 0;
+            if (iss >> i >> j) {
+                if (i != j)
+                    m_arap.addEqualityConstraint(i, j);
+            }
+        }
+    }
 }
 
 // ================== Basic OpenGL Overrides
@@ -306,6 +348,8 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     if (textured) {
         m_arap.initTexture(vertices, triangles, cornerUVs, texId);
     }
+
+    applyArapConstraintsSidecar(path);
 
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;
