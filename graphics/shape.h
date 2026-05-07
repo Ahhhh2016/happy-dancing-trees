@@ -42,6 +42,9 @@ public:
     void draw(Shader *shader);
 
     void clearAnchors();
+    void clearVertices() {
+        m_vertices = std::vector<Eigen::Vector3f>();
+    }
 
     const std::vector<Eigen::Vector3f>& getVertices();
     const std::vector<Eigen::Vector3i>& getFaces();

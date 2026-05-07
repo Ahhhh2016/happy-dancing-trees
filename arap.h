@@ -29,7 +29,10 @@ public:
 
     void move(int vertex, Eigen::Vector3f targetPosition);
 
-    void destroyGL() { m_shape.destroyGL(); }
+    void destroyGL() {
+        m_shape.destroyGL();
+        m_shape.clearAnchors();
+    }
 
     // shape.cpp delegations
     int getClosestVertex(Eigen::Vector3f start, Eigen::Vector3f ray, float threshold)
