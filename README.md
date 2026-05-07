@@ -1,8 +1,5 @@
 ### Happy Dancing Trees 🎋🎋🎋
-Jake Ronan
-Lizzy Bazldjoo
-Sue An Park
-Yixuan Liu
+By. Jake Ronan, Lizzy Bazldjoo, Sue An Park, Yixuan Liu
 
 ### Paper: 
 Monster Mash: A Single-View Approach to Casual 3D Modeling and Animation
