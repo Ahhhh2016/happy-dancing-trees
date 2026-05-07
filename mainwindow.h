@@ -14,6 +14,7 @@
 #include <QFrame>
 #include <QTimer>
 #include <QList>
+#include <QCheckBox>
 
 #include "canvas2d.h"
 #include "glwidget.h"
