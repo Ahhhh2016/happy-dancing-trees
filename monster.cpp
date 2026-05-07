@@ -236,6 +236,20 @@ StitchedMesh monster::buildMesh(const std::vector<Region>& regions, double canva
     // 5) Stitch host outside-Bp to limb Bp by same-side seam welding.
     StitchedMesh result = stitchParts();
 
+    // Empty input or fully-erased canvas: skip post-processing (Eigen's
+    // maxCoeff()/solvers assert on empty matrices) and emit an empty OBJ so
+    // the GL viewer clears any stale mesh from a previous build.
+    if (result.V.rows() == 0 || result.F.rows() == 0) {
+        Eigen::MatrixXd emptyV(0, 3);
+        Eigen::MatrixXi emptyF(0, 3);
+        writeOBJWithPlanarUV("mesh12.obj", emptyV, emptyF, canvasW, canvasH);
+        std::ofstream constraintsOut("mesh12_arap_constraints.txt");
+        if (constraintsOut) {
+            constraintsOut << "# (no regions — empty mesh)\n";
+        }
+        return result;
+    }
+
     // Qt stroke coords match the on-screen sketch, but the meshed embedding ended up
     // 180° out (both axes inverted vs. the drawing). Rotate the XY embedding about
     // the canvas center before thickness inflation so OBJ / GL / MeshLab agree with 2D.

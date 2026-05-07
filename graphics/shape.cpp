@@ -641,6 +641,6 @@ void Shape::clearAnchors() {
     m_anchors.clear();
 }
 
-const vector<Vector3f> &Shape::getVertices() { return m_vertices; }
-const vector<Vector3i> &Shape::getFaces() { return m_faces; }
-const unordered_set<int> &Shape::getAnchors() { return m_anchors; }
+const vector<Vector3f> &Shape::getVertices() const { return m_vertices; }
+const vector<Vector3i> &Shape::getFaces() const { return m_faces; }
+const unordered_set<int> &Shape::getAnchors() const { return m_anchors; }

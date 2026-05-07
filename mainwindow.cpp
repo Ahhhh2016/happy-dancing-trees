@@ -447,7 +447,14 @@ void MainWindow::finishAsyncSliderMeshRebuild() {
     m_sliderMeshRebuildBusy = false;
 
     const QString path = QStringLiteral("mesh12.obj");
-    if (!QFileInfo::exists(path)) {
+    if (m_canvas->getRegions().empty()) {
+        // Canvas was cleared (e.g. user erased the last stroke) — the OBJ
+        // monster wrote is empty, so drop the stale mesh from the 3D view too.
+        if (m_glWidget) {
+            m_glWidget->clearMesh();
+        }
+        m_lastMeshPath.clear();
+    } else if (!QFileInfo::exists(path)) {
         std::cerr << "Build Mesh did not produce " << path.toStdString() << std::endl;
     } else {
         std::cout << "Mesh written to: "
