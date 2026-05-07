@@ -327,20 +327,53 @@ void Shape::setVertices(const vector<Vector3f> &vertices)
     }
     m_vertices = vertices;
 
-    vector<Vector3f> verts;
-    vector<Vector3f> normals;
-    vector<Vector3f> colors;
-    updateMesh(m_faces, vertices, verts, normals, colors);
+    if (m_hasTexture) {
+        // VBO layout when texturing: [positions | normals | uvs]. We need to
+        // refresh positions and normals from the deformed vertex list but
+        // keep the UV bytes intact so paint stays mapped to the surface.
+        vector<Vector3f> verts;
+        vector<Vector3f> normals;
+        verts.reserve(m_faces.size() * 3);
+        normals.reserve(m_faces.size() * 3);
+        for (const auto &face : m_faces) {
+            const Vector3f &v0 = vertices[face[0]];
+            const Vector3f &v1 = vertices[face[1]];
+            const Vector3f &v2 = vertices[face[2]];
+            Vector3f n = (v1 - v0).cross(v2 - v0);
+            if (n.squaredNorm() > 1e-10f) {
+                n.normalize();
+            } else {
+                n = Vector3f::UnitY();
+            }
+            verts.push_back(v0);
+            verts.push_back(v1);
+            verts.push_back(v2);
+            normals.push_back(n);
+            normals.push_back(n);
+            normals.push_back(n);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, m_surfaceVbo);
+        const GLsizeiptr posBytes = static_cast<GLsizeiptr>(sizeof(float) * verts.size() * 3);
+        const GLsizeiptr normBytes = static_cast<GLsizeiptr>(sizeof(float) * normals.size() * 3);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, posBytes, verts.data());
+        glBufferSubData(GL_ARRAY_BUFFER, posBytes, normBytes, normals.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    } else {
+        vector<Vector3f> verts;
+        vector<Vector3f> normals;
+        vector<Vector3f> colors;
+        updateMesh(m_faces, vertices, verts, normals, colors);
 
-    glBindBuffer(GL_ARRAY_BUFFER, m_surfaceVbo);
-    const GLsizeiptr posBytes = static_cast<GLsizeiptr>(sizeof(float) * verts.size() * 3);
-    const GLsizeiptr normBytes = static_cast<GLsizeiptr>(sizeof(float) * normals.size() * 3);
-    const GLsizeiptr colorBytes = static_cast<GLsizeiptr>(sizeof(float) * colors.size() * 3);
-    glBufferData(GL_ARRAY_BUFFER, posBytes + normBytes + colorBytes, nullptr, GL_DYNAMIC_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, posBytes, verts.data());
-    glBufferSubData(GL_ARRAY_BUFFER, posBytes, normBytes, normals.data());
-    glBufferSubData(GL_ARRAY_BUFFER, posBytes + normBytes, colorBytes, colors.data());
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindBuffer(GL_ARRAY_BUFFER, m_surfaceVbo);
+        const GLsizeiptr posBytes = static_cast<GLsizeiptr>(sizeof(float) * verts.size() * 3);
+        const GLsizeiptr normBytes = static_cast<GLsizeiptr>(sizeof(float) * normals.size() * 3);
+        const GLsizeiptr colorBytes = static_cast<GLsizeiptr>(sizeof(float) * colors.size() * 3);
+        glBufferData(GL_ARRAY_BUFFER, posBytes + normBytes + colorBytes, nullptr, GL_DYNAMIC_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, posBytes, verts.data());
+        glBufferSubData(GL_ARRAY_BUFFER, posBytes, normBytes, normals.data());
+        glBufferSubData(GL_ARRAY_BUFFER, posBytes + normBytes, colorBytes, colors.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 
     if (m_tetVao != static_cast<GLuint>(-1)) {
         glBindBuffer(GL_ARRAY_BUFFER, m_tetVbo);
@@ -572,6 +605,6 @@ Vector3f Shape::getNormal(const Vector3i &face)
     return getNormal(face, m_vertices);
 }
 
-const vector<Vector3f> &Shape::getVertices() { return m_vertices; }
-const vector<Vector3i> &Shape::getFaces() { return m_faces; }
-const unordered_set<int> &Shape::getAnchors() { return m_anchors; }
+const vector<Vector3f> &Shape::getVertices() const { return m_vertices; }
+const vector<Vector3i> &Shape::getFaces() const { return m_faces; }
+const unordered_set<int> &Shape::getAnchors() const { return m_anchors; }

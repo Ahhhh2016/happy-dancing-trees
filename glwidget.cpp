@@ -8,7 +8,9 @@
 #include <QFile>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include "monster.h"
 
 #define SPEED 1.5
@@ -72,9 +74,16 @@ void GLWidget::clearMesh()
     if (m_glInitialized) {
         makeCurrent();
         m_mesh.destroyGL();
+        // Also tear down ARAP's internal Shape buffers and solver state so the
+        // anchors / surface / wireframe from the previous mesh stop drawing.
+        m_arap.clear();
         doneCurrent();
     }
     m_meshLoaded = false;
+    m_lastSelectedVertex = -1;
+    m_rightClickSelectMode = SelectMode::None;
+    m_leftCapture = false;
+    m_rightCapture = false;
     update();
 }
 
@@ -162,14 +171,29 @@ void GLWidget::paintGL()
 
     glClear(GL_DEPTH_BUFFER_BIT);
 
-    m_pointShader->bind();
-    m_pointShader->setUniform("proj",   m_camera.getProjection());
-    m_pointShader->setUniform("view",   m_camera.getView());
-    m_pointShader->setUniform("vSize",  m_vSize);
-    m_pointShader->setUniform("width",  width());
-    m_pointShader->setUniform("height", height());
-    m_arap.draw(m_pointShader, GL_POINTS);
-    m_pointShader->unbind();
+    // Don't draw anchor points after a clear / before any mesh is loaded.
+    if (m_meshLoaded && m_showAnchors) {
+        m_pointShader->bind();
+        m_pointShader->setUniform("proj",   m_camera.getProjection());
+        m_pointShader->setUniform("view",   m_camera.getView());
+        m_pointShader->setUniform("vSize",  m_vSize);
+        m_pointShader->setUniform("width",  width());
+        m_pointShader->setUniform("height", height());
+        m_arap.draw(m_pointShader, GL_POINTS);
+        m_pointShader->unbind();
+    }
+}
+
+void GLWidget::setAnchorsVisible(bool visible)
+{
+    if (m_showAnchors == visible) return;
+    m_showAnchors = visible;
+    update();
+}
+
+void GLWidget::toggleAnchorsVisible()
+{
+    setAnchorsVisible(!m_showAnchors);
 }
 
 void GLWidget::resizeGL(int w, int h)
@@ -291,15 +315,65 @@ void GLWidget::loadMeshFromFile(const std::string &path)
         texId = 0;
     }
 
-    if (textured) {
-        m_mesh.init(vertices, triangles, cornerUVs, texId);
-    } else if (texId != 0) {
-        glDeleteTextures(1, &texId);
+    // Try to load ARAP-L metadata sidecar (<basename>_arapl.txt) written by monster.
+    ArapLMetadata meta;
+    bool hasMeta = false;
+    {
+        const QString metaPath = objFi.absolutePath() + QLatin1Char('/') +
+                                 objFi.completeBaseName() + QStringLiteral("_arapl.txt");
+        if (QFile::exists(metaPath)) {
+            std::ifstream in(metaPath.toStdString());
+            if (in) {
+                std::string tag;
+                int n = 0;
+                int pCount = 0;
+                in >> tag >> n;
+                in >> tag >> pCount;
+                meta.partDepth.assign(std::max(0, pCount), 0);
+                for (int i = 0; i < pCount; ++i) in >> meta.partDepth[i];
+                in >> tag; // "v"
+                meta.partId.assign(std::max(0, n), -1);
+                meta.curveType.assign(std::max(0, n), CurveType::Interior);
+                for (int i = 0; i < n; ++i) {
+                    int pid = -1;
+                    int ctype = 0;
+                    in >> pid >> ctype;
+                    meta.partId[i] = pid;
+                    meta.curveType[i] = static_cast<CurveType>(ctype);
+                }
+                int eqCount = 0;
+                in >> tag >> eqCount;
+                meta.equalityPairs.reserve(std::max(0, eqCount));
+                for (int k = 0; k < eqCount; ++k) {
+                    int a = -1, b = -1;
+                    in >> a >> b;
+                    meta.equalityPairs.push_back({a, b});
+                }
+                hasMeta = static_cast<int>(meta.partId.size()) ==
+                          static_cast<int>(vertices.size());
+                if (!hasMeta) {
+                    std::cerr << "ARAP-L sidecar size mismatch (" << meta.partId.size()
+                              << " vs " << vertices.size() << "), ignoring." << std::endl;
+                }
+            }
+        }
     }
 
-    // Initialize ARAP with the mesh.
+    // Initialize ARAP with the mesh (and ARAP-L metadata when available).
     Eigen::Vector3f coeffMin, coeffMax;
-    m_arap.init(coeffMin, coeffMax, vertices, triangles);
+    if (hasMeta) {
+        m_arap.init(coeffMin, coeffMax, vertices, triangles, meta);
+    } else {
+        m_arap.init(coeffMin, coeffMax, vertices, triangles);
+    }
+
+    // Push the painted texture into ARAP's render Shape so paint is visible on
+    // the same mesh that ARAP deforms. Any previously-bound texture for this
+    // Shape is replaced; UV bytes will be preserved by setVertices() under
+    // subsequent ARAP::move() calls.
+    if (textured) {
+        m_arap.initShapeWithTexture(vertices, triangles, cornerUVs, texId);
+    }
 
     float extentLength = (coeffMax - coeffMin).norm();
     m_vSize = 0.005f * extentLength;
@@ -419,6 +493,7 @@ void GLWidget::keyPressEvent(QKeyEvent *event)
     case Qt::Key_C: m_camera.toggleIsOrbiting(); break;
     case Qt::Key_Equal: m_vSize *= 11.0f / 10.0f; break;
     case Qt::Key_Minus: m_vSize *= 10.0f / 11.0f; break;
+    case Qt::Key_P: toggleAnchorsVisible(); break;
     case Qt::Key_Escape: QApplication::quit();
     }
 }

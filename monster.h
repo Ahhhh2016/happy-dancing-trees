@@ -48,6 +48,8 @@ struct MeshPart {
     std::vector<bool> isDirichlet; // on Dp: h=0 in Poisson solve
     std::vector<bool> isMerging;      // on Bp: candidate for welding
     std::vector<std::pair<int,int>> armpitPairs;
+    // ARAP-L metadata: per-vertex part identifier (front/back halves get distinct ids).
+    std::vector<int> partId;
     int depthOrder;
 };
 
@@ -58,6 +60,9 @@ struct StitchedMesh {
     std::vector<bool> isDirichlet;
     std::vector<bool> isMerging;
     std::vector<std::pair<int,int>> armpitPairs; // front/back index pairs at Bp endpoints
+    // ARAP-L metadata, written to <basename>_arapl.txt for the deformer to consume.
+    std::vector<int> partId;            // size n
+    std::vector<int> partDepth;         // size num_parts
 };
 
 class monster {

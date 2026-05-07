@@ -40,9 +40,9 @@ public:
     SelectMode select(Shader *shader, int closest_vertex);
     bool selectWithSpecifiedMode(Shader *shader, int closest_vertex, SelectMode mode);
 
-    const std::vector<Eigen::Vector3f>& getVertices();
-    const std::vector<Eigen::Vector3i>& getFaces();
-    const std::unordered_set<int>& getAnchors();
+    const std::vector<Eigen::Vector3f>& getVertices() const;
+    const std::vector<Eigen::Vector3i>& getFaces() const;
+    const std::unordered_set<int>& getAnchors() const;
 
 private:
     void destroySurfaceGL();

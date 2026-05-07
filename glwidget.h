@@ -37,6 +37,11 @@ public:
 
     void loadMeshFromFile(const std::string &path);
 
+    // Show/hide the red ARAP vertex/anchor point overlay.
+    void setAnchorsVisible(bool visible);
+    void toggleAnchorsVisible();
+    bool anchorsVisible() const { return m_showAnchors; }
+
 private:
     static const int FRAMES_TO_AVERAGE = 30;
 
@@ -90,6 +95,7 @@ private:
     float m_movementScaling;
     float m_vertexSelectionThreshold;
     float m_vSize;
+    bool m_showAnchors = true;
 
 private slots:
 

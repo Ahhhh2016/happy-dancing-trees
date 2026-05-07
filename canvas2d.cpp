@@ -595,6 +595,44 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
     depthAssignedStroke.isMergingBoundary = false;
     depthAssignedStroke.depthOrder = computeDepthOrderForStroke(stroke);
 
+    // Auto-close hand-drawn loops where the user came back close to the start
+    // but didn't quite touch it. We only snap when the closing chord wouldn't
+    // cross any existing stroke — otherwise this is an attachment-style arc
+    // (e.g. a leg that hops onto the body) and the chord must stay as a real
+    // merging boundary.
+    if (depthAssignedStroke.points.size() >= 3 &&
+        !depthAssignedStroke.isClosed()) {
+        const Eigen::Vector2f front = depthAssignedStroke.points.front();
+        const Eigen::Vector2f back = depthAssignedStroke.points.back();
+
+        Eigen::Vector2f mn = front;
+        Eigen::Vector2f mx = front;
+        for (const Eigen::Vector2f &p : depthAssignedStroke.points) {
+            mn = mn.cwiseMin(p);
+            mx = mx.cwiseMax(p);
+        }
+        const float diag = (mx - mn).norm();
+        const float gap = (front - back).norm();
+        // Snap threshold: max(20 px, 10% of stroke bbox diagonal).
+        const float threshold = std::max(20.0f, 0.10f * diag);
+
+        if (gap > 0.0f && gap <= threshold) {
+            const Stroke provisionalChord = makeClosingCurve(depthAssignedStroke);
+            bool chordCrossesExisting = false;
+            for (const Stroke &existing : m_strokes) {
+                if (strokesIntersect(provisionalChord, existing)) {
+                    chordCrossesExisting = true;
+                    break;
+                }
+            }
+            if (!chordCrossesExisting) {
+                // Snap the last sample onto the first so isClosed() returns true
+                // with the default tolerance and no closing curve is added.
+                depthAssignedStroke.points.back() = depthAssignedStroke.points.front();
+            }
+        }
+    }
+
     Stroke closingCurve;
     if (!depthAssignedStroke.isClosed()) {
         closingCurve = makeClosingCurve(depthAssignedStroke);

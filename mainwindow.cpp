@@ -8,6 +8,7 @@
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
@@ -100,6 +101,15 @@ MainWindow::MainWindow()
     QPushButton *center3DButton = new QPushButton(tr("Center 3D view"));
     center3DButton->setToolTip(tr("Reset camera to the default centered mesh view."));
     brushLayout->addWidget(center3DButton);
+
+    QCheckBox *showAnchorsCheck = new QCheckBox(tr("Show ARAP points (P)"));
+    showAnchorsCheck->setToolTip(
+        tr("Toggle the red ARAP vertex/anchor overlay in the 3D view."));
+    showAnchorsCheck->setChecked(true);
+    brushLayout->addWidget(showAnchorsCheck);
+    connect(showAnchorsCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_glWidget) m_glWidget->setAnchorsVisible(on);
+    });
     connect(canvasViewRadio, &QRadioButton::toggled, this, [this](bool on) {
         if (on) {
             applyCanvasViewMode();
@@ -246,11 +256,23 @@ void MainWindow::setupCanvas2D() {
 
 void MainWindow::onClearButtonClick() {
     m_canvas->resize(m_canvas->parentWidget()->size().width(), m_canvas->parentWidget()->size().height());
+    // clearCanvas() emits meshPreviewDirty -> debounce timer; cancel it so we
+    // don't ressurect the previous mesh from disk after the user cleared.
     m_canvas->clearCanvas();
+    m_meshPreviewDebounceTimer.stop();
+
     if (m_glWidget) {
         m_glWidget->clearMesh();
     }
     m_lastMeshPath.clear();
+
+    // Remove cached mesh artifacts so a stale buildMesh() result can't be
+    // re-loaded by finishAsyncSliderMeshRebuild() if a rebuild was already in
+    // flight when the user clicked Clear.
+    QFile::remove(QStringLiteral("mesh12.obj"));
+    QFile::remove(QStringLiteral("mesh12_texture.png"));
+    QFile::remove(QStringLiteral("mesh12_arapl.txt"));
+
     if (m_brushToolRadio) {
         m_brushToolRadio->setChecked(true);
     }
@@ -299,11 +321,20 @@ void MainWindow::requestAsyncMeshRebuildIfIdle() {
 }
 
 void MainWindow::startAsyncSliderMeshRebuild() {
+    std::vector<Region> regions = m_canvas->getRegions();
+    if (regions.empty()) {
+        // Nothing to mesh (canvas just got cleared, etc.); make sure no stale
+        // mesh remains in the 3D view.
+        if (m_glWidget) {
+            m_glWidget->clearMesh();
+        }
+        return;
+    }
+
     m_sliderMeshRebuildBusy = true;
     m_meshResolutionSlider->setEnabled(false);
     QApplication::setOverrideCursor(Qt::BusyCursor);
 
-    std::vector<Region> regions = m_canvas->getRegions();
     const double cw = static_cast<double>(m_canvas->m_width);
     const double ch = static_cast<double>(m_canvas->m_height);
     const double maxA = maxTriangleAreaFromSlider();
@@ -326,6 +357,19 @@ void MainWindow::finishAsyncSliderMeshRebuild() {
     QApplication::restoreOverrideCursor();
     m_meshResolutionSlider->setEnabled(true);
     m_sliderMeshRebuildBusy = false;
+
+    // If the canvas was cleared while the rebuild was running, refuse to
+    // reload an old mesh from disk — keep the 3D view empty.
+    if (m_canvas->getRegions().empty()) {
+        if (m_glWidget) {
+            m_glWidget->clearMesh();
+        }
+        m_lastMeshPath.clear();
+        if (m_sliderMeshRebuildPending) {
+            m_sliderMeshRebuildPending = false;
+        }
+        return;
+    }
 
     const QString path = QStringLiteral("mesh12.obj");
     if (!QFileInfo::exists(path)) {
