@@ -68,7 +68,6 @@ public:
     ARAP();
     void init(Eigen::Vector3f &min, Eigen::Vector3f &max,
               std::vector<Eigen::Vector3f> V, std::vector<Eigen::Vector3i> T);
-<<<<<<< HEAD
     // ARAP-L initialization. The plain init() above keeps default behavior unchanged.
     void init(Eigen::Vector3f &min, Eigen::Vector3f &max,
               std::vector<Eigen::Vector3f> V, std::vector<Eigen::Vector3i> T,
@@ -91,13 +90,6 @@ public:
 
     // Reset all ARAP state so nothing remains drawn after a canvas clear.
     void clear();
-=======
-    void init(Eigen::Vector3f &coeffMin, Eigen::Vector3f &coeffMax, std::vector<Eigen::Vector3f> V, std::vector<Eigen::Vector3i> T, Shape &s);
-    void initTexture(const std::vector<Eigen::Vector3f> &vertices,
-                     const std::vector<Eigen::Vector3i> &triangles,
-                     const std::vector<Eigen::Vector2f> &texcoordsPerCorner,
-                     GLuint diffuseTexture);
->>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
     void move(int vertex, Eigen::Vector3f pos);
     std::map<int, Eigen::Vector3f> getNeighbors(Eigen::Vector3f &i);
     std::map<int, Eigen::Vector3f> getNeighborsByIndex(int idx);

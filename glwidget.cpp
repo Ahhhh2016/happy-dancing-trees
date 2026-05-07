@@ -364,7 +364,6 @@ void GLWidget::loadMeshFromFile(const std::string &path)
 
     // Initialize ARAP with the mesh (and ARAP-L metadata when available).
     Eigen::Vector3f coeffMin, coeffMax;
-<<<<<<< HEAD
     if (hasMeta) {
         m_arap.init(coeffMin, coeffMax, vertices, triangles, meta);
     } else {
@@ -377,11 +376,6 @@ void GLWidget::loadMeshFromFile(const std::string &path)
     // subsequent ARAP::move() calls.
     if (textured) {
         m_arap.initShapeWithTexture(vertices, triangles, cornerUVs, texId);
-=======
-    m_arap.init(coeffMin, coeffMax, vertices, triangles);
-    if (textured) {
-        m_arap.initTexture(vertices, triangles, cornerUVs, texId);
->>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
     }
 
     float extentLength = (coeffMax - coeffMin).norm();

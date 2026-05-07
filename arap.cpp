@@ -49,7 +49,6 @@ void ARAP::init(Eigen::Vector3f &coeffMin, Eigen::Vector3f &coeffMax, vector<Vec
     coeffMax = all_vertices.colwise().maxCoeff();
 }
 
-<<<<<<< HEAD
 void ARAP::init(Eigen::Vector3f &coeffMin, Eigen::Vector3f &coeffMax,
                 vector<Vector3f> V, vector<Vector3i> T, const ArapLMetadata &meta)
 {
@@ -135,16 +134,6 @@ void ARAP::clear()
     m_meta = {};
     m_eqStatic.clear();
     m_layerPerPart.clear();
-=======
-void ARAP::initTexture(const std::vector<Eigen::Vector3f> &vertices,
-                 const std::vector<Eigen::Vector3i> &triangles,
-                 const std::vector<Eigen::Vector2f> &texcoordsPerCorner,
-                 GLuint diffuseTexture)
-{
-    m_shape.init(vertices, triangles, texcoordsPerCorner, diffuseTexture);
-    m_p = m_shape.getVertices();
-    initializeLMat();
->>>>>>> d21cb2dd832f2db46fd2421bebfa6de9a656c17d
 }
 
 // Move an anchored vertex, defined by its index, to targetPosition
