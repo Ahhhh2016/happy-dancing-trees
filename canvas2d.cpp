@@ -105,6 +105,52 @@ QPainterPath makeClosedFillPath(const Stroke &stroke) {
     return fillPath;
 }
 
+// True when `chord` (a region's closing curve) actually plugs into the fill
+// area of `targetRegion`. We sample interior points along the chord rather
+// than testing endpoints — the chord tips coincide with the open stroke's
+// endpoints which lie ON the region outline, where QPainterPath::contains
+// is unreliable. The geometric meaning is "this chord is the seam where
+// the two regions should be stitched together", which is exactly the
+// condition the meshing stage uses to classify hosts vs. attachments.
+bool chordPassesThroughRegion(const Stroke &chord, const Region &targetRegion) {
+    if (chord.points.size() < 2 || targetRegion.boundaries.empty()) {
+        return false;
+    }
+    const Stroke &targetMain = targetRegion.boundaries.front();
+    const QPainterPath path = makeClosedFillPath(targetMain);
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    float total = 0.f;
+    for (std::size_t k = 1; k < chord.points.size(); ++k) {
+        total += (chord.points[k] - chord.points[k - 1]).norm();
+    }
+    if (total <= 0.f) {
+        return false;
+    }
+
+    constexpr int kSamples = 9;
+    for (int i = 1; i < kSamples; ++i) {
+        const float targetLen = total * static_cast<float>(i) / static_cast<float>(kSamples);
+        float acc = 0.f;
+        Eigen::Vector2f q = chord.points.front();
+        for (std::size_t k = 1; k < chord.points.size(); ++k) {
+            const float seg = (chord.points[k] - chord.points[k - 1]).norm();
+            if (acc + seg >= targetLen) {
+                const float u = seg > 0.f ? (targetLen - acc) / seg : 0.f;
+                q = chord.points[k - 1] * (1.f - u) + chord.points[k] * u;
+                break;
+            }
+            acc += seg;
+        }
+        if (path.contains(QPointF(q.x(), q.y()))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 RGBA fadeImportedPixelForCanvas(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
     const float t = kImportedTemplateDisplayFade;
     auto blend = [t](std::uint8_t c) -> std::uint8_t {
@@ -345,6 +391,9 @@ std::vector<RGBA> Canvas2D::compositeMeshTexture() const {
 
 void Canvas2D::init() {
     setMouseTracking(true);
+    // Anchor the painted pixmap to the top-left corner so widget coordinates
+    // line up with buffer coordinates after resizeEvent grows the canvas.
+    setAlignment(Qt::AlignLeft | Qt::AlignTop);
     m_width = 500;
     m_height = 500;
     clearCanvas(false);
@@ -444,7 +493,15 @@ void Canvas2D::displayImage() {
     QByteArray img(reinterpret_cast<const char *>(comp.data()), static_cast<int>(4 * comp.size()));
     QImage now = QImage((const uchar *)img.data(), m_width, m_height, QImage::Format_RGBX8888);
     setPixmap(QPixmap::fromImage(now));
-    setFixedSize(m_width, m_height);
+    if (m_hasImportedTemplate) {
+        // Lock to the template image dimensions; the QScrollArea handles overflow.
+        setFixedSize(m_width, m_height);
+    } else {
+        // Allow the parent pane to enlarge us; the buffer is grown to match in
+        // resizeEvent so the entire visible area is drawable.
+        setMinimumSize(m_width, m_height);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    }
     update();
 }
 
@@ -455,6 +512,46 @@ void Canvas2D::resize(int w, int h) {
     m_textureNoStroke.resize(static_cast<std::size_t>(w * h));
     m_paintLayer.assign(static_cast<std::size_t>(w * h), RGBA(0, 0, 0, 0));
     m_strokeOverlay.assign(static_cast<std::size_t>(w * h), RGBA(0, 0, 0, 0));
+    displayImage();
+}
+
+void Canvas2D::resizeEvent(QResizeEvent *event) {
+    QLabel::resizeEvent(event);
+
+    // Imported templates have a fixed canvas size, so let the QScrollArea
+    // handle scrolling instead of growing the buffers under the image.
+    if (m_hasImportedTemplate) {
+        return;
+    }
+
+    const int targetW = std::max(width(), m_width);
+    const int targetH = std::max(height(), m_height);
+    if (targetW <= m_width && targetH <= m_height) {
+        return;
+    }
+
+    // Grow each buffer in place, preserving existing top-left content so any
+    // strokes already drawn stay where the user put them.
+    auto growBuffer = [&](std::vector<RGBA> &buf, RGBA fill) {
+        if (buf.empty()) return;
+        std::vector<RGBA> newBuf(static_cast<std::size_t>(targetW * targetH), fill);
+        const int copyW = std::min(targetW, m_width);
+        const int copyH = std::min(targetH, m_height);
+        for (int y = 0; y < copyH; ++y) {
+            const RGBA *src = buf.data() + static_cast<std::size_t>(y) * m_width;
+            RGBA *dst = newBuf.data() + static_cast<std::size_t>(y) * targetW;
+            std::copy(src, src + copyW, dst);
+        }
+        buf = std::move(newBuf);
+    };
+
+    growBuffer(m_data, RGBA{255, 255, 255, 255});
+    growBuffer(m_textureNoStroke, RGBA{255, 255, 255, 255});
+    growBuffer(m_paintLayer, RGBA{0, 0, 0, 0});
+    growBuffer(m_strokeOverlay, RGBA{0, 0, 0, 0});
+
+    m_width = targetW;
+    m_height = targetH;
     displayImage();
 }
 
@@ -613,8 +710,10 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
         }
         const float diag = (mx - mn).norm();
         const float gap = (front - back).norm();
-        // Snap threshold: max(20 px, 10% of stroke bbox diagonal).
-        const float threshold = std::max(20.0f, 0.10f * diag);
+        // Snap threshold: max(8 px, 3% of stroke bbox diagonal). Smaller than
+        // before so the user can intentionally leave small openings (e.g. a
+        // crescent or a horseshoe shape) without them being auto-closed.
+        const float threshold = std::max(8.0f, 0.03f * diag);
 
         if (gap > 0.0f && gap <= threshold) {
             const Stroke provisionalChord = makeClosingCurve(depthAssignedStroke);
@@ -640,11 +739,36 @@ void Canvas2D::commitStrokeAsRegion(const Stroke &stroke) {
 
     Region region = makeRegionFromStroke(depthAssignedStroke, closingCurve);
     const std::vector<int> overlapping = findOverlappingRegions(region);
-    if (!closingCurve.points.empty() &&
-        closingCurve.isClosingCurve &&
-        !overlapping.empty()) {
-        closingCurve.isMergingBoundary = true;
-        region.boundaries.back().isMergingBoundary = true;
+
+    // Mark the new region's chord as a merging boundary only when it actually
+    // plugs into an existing region's fill. The previous looser rule ("any
+    // overlap") promoted a freshly-drawn body to an attachment whenever it
+    // covered pre-existing limbs, which left the connected component with
+    // no host and broke stitching.
+    if (!closingCurve.points.empty() && closingCurve.isClosingCurve) {
+        for (int oldIdx : overlapping) {
+            const Region &oldRegion = m_regions[static_cast<std::size_t>(oldIdx)];
+            if (chordPassesThroughRegion(region.boundaries.back(), oldRegion)) {
+                region.boundaries.back().isMergingBoundary = true;
+                break;
+            }
+        }
+    }
+
+    // Retroactively promote pre-existing host regions into attachments when
+    // this new region (typically a body drawn after limbs) now contains
+    // their closing chord. Without this, limbs drawn before the body would
+    // remain standalone hosts and float behind the body unstitched. With
+    // this, "limbs first → body second" produces the same connected mesh
+    // as "body first → limbs second".
+    for (int oldIdx : overlapping) {
+        Region &oldRegion = m_regions[static_cast<std::size_t>(oldIdx)];
+        for (Stroke &b : oldRegion.boundaries) {
+            if (!b.isClosingCurve || b.isMergingBoundary) continue;
+            if (chordPassesThroughRegion(b, region)) {
+                b.isMergingBoundary = true;
+            }
+        }
     }
 
     m_strokes.push_back(depthAssignedStroke);

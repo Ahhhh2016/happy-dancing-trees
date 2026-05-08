@@ -112,6 +112,7 @@ private:
         mouseUp(event->position());
     }
     virtual void paintEvent(QPaintEvent *event) override;
+    virtual void resizeEvent(QResizeEvent *event) override;
 
     // TODO: add any member variables or functions you need
     Eigen::Vector2f toVector2D(const QPointF &point) const;
